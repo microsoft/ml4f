@@ -756,7 +756,6 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
     mem.fill(1000.2342)
     mem.set(weights, weightOff)
     function softmax(ptr, len) {
-        console.log("softmax",mem.slice(ptr,ptr+len))
         let max = mem[ptr]
         for (let i = 1; i < len; ++i)
             max = Math.max(mem[ptr + i], max)
