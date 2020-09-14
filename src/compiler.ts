@@ -127,7 +127,8 @@ function numCycles(ops: Op[]): number {
             case OpCode.loadConst:
                 if (op.num == 0 || op.num == 1)
                     cycles += 1
-                cycles += 4
+                else
+                    cycles += 4
                 break
             case OpCode.load:
                 cycles += 1 + op.num
@@ -190,7 +191,7 @@ function toJS(op: Op): string {
             let r = ""
             let dp = op.src + 0
             for (let i = 0; i < op.num; ++i)
-                r += ` mem[${dst} + ${i}] = ${reg(dp++)}\n`
+                r += `mem[${dst} + ${i}] = ${reg(dp++)}\n`
             if (op.adv)
                 r += `${dst} += ${op.num}\n`
             return r
@@ -734,12 +735,14 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
 
     for (const l of m.layers) {
         const info = getLayerInfo(l)
-        if (opts.verbose)
-            console.log(l.getClassName(), info.inputShape, info.inputOff, info.outputOff)
+
         const f = compilers[l.getClassName()]
-        if (f)
-            ops.push(f(l))
-        else
+        if (f) {
+            const tmp = f(l)
+            if (opts.verbose)
+                console.log(l.getClassName(), numCycles(tmp), info.inputShape, info.inputOff, info.outputOff)
+            ops.push(tmp)
+        } else
             console.log("unsupported layer: ", l.getClassName())
     }
 
