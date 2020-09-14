@@ -1,5 +1,17 @@
+# Model compiler
 
-# Contributing
+Usage:
+
+```
+yarn install
+yarn watch
+# in another window
+http-server -c1
+```
+
+Then open http://localhost:8080/
+
+## Contributing
 
 This project welcomes contributions and suggestions.  Most contributions require you to agree to a
 Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
