@@ -89,13 +89,11 @@ function sampleModel() {
 
     model.add(tf.layers.flatten());
 
-    /*
     model.add(tf.layers.dense({
-        units: classNames.length,
+        units: 4,
         kernelInitializer: 'varianceScaling',
         activation: 'softmax'
     }));
-    */
 
     const optimizer = tf.train.adam();
     model.compile({

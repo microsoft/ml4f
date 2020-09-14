@@ -1,3 +1,5 @@
+///<reference path="pxtpackage.d.ts" />
+
 import * as tf from '@tensorflow/tfjs'
 import * as tfi from './tfi'
 import * as U from './util'
@@ -28,6 +30,7 @@ enum OpCode {
     vmax,
     vadd,
     relu,
+    fcall,
 }
 
 enum Reg {
@@ -50,6 +53,7 @@ interface Op {
     num?: number
     adv?: boolean
     body?: Op[]
+    fname?: string
 }
 
 const numFPRegs = 32
@@ -145,6 +149,9 @@ function numCycles(ops: Op[]): number {
                     cycles += 1
                 prevDst = op.dst
                 break
+            case OpCode.fcall:
+                cycles += op.num * 200 // estimate
+                break
             default:
                 throw new Error("bad op " + op.opcode)
         }
@@ -196,6 +203,8 @@ function toJS(op: Op): string {
             return `${dst} = ${src} + ${srcAlt}\n`
         case OpCode.vmax:
             return `${dst} = Math.max(${src}, ${srcAlt})\n`
+        case OpCode.fcall:
+            return `${op.fname}(${dst}, ${op.num})`
         default:
             throw new Error("bad op " + op.opcode)
     }
@@ -308,6 +317,15 @@ function vadd(dst: Reg, a: Reg, b: Reg) {
     }
 }
 
+function fcall(name: string, dst: Reg, len: number): Op {
+    return {
+        opcode: OpCode.fcall,
+        fname: name,
+        dst,
+        num: len,
+    }
+}
+
 function flatten(...args: (Op | Op[] | Op[][])[]) {
     const res: Op[] = []
     const add = (a: Op) => {
@@ -343,6 +361,21 @@ function validateConfig(layer: tf.layers.Layer) {
         unsupported("dataFormat: " + config.dataFormat)
     if (config.dtype && config.dtype != "float32")
         unsupported("dtype: " + config.dtype)
+}
+
+function addActivation(res: Op[], layer: tf.layers.Layer) {
+    const config = layer.getConfig() as unknown as tfi.DenseLayerArgs
+    const info = getLayerInfo(layer)
+    const numoutp = shapeElts(info.outputShape)
+
+    res.push(loadDataAddr(Reg.OutputPtr, info.outputOff))
+
+    if (config.activation == "relu")
+        res.push(repeat(numoutp, () => [relu(Reg.OutputPtr)]))
+    else if (config.activation == "softmax")
+        res.push(fcall("softmax", Reg.OutputPtr, numoutp))
+    else
+        unsupported("activation: " + config.activation)
 }
 
 function compileConv2D(layer: tf.layers.Layer) {
@@ -460,14 +493,7 @@ function compileConv2D(layer: tf.layers.Layer) {
             return res
         })]
 
-    // maybe fold activation into last row of convolution?
-    if (config.activation == "relu")
-        res.push(
-            loadDataAddr(Reg.OutputPtr, info.outputOff),
-            repeat(shapeElts(info.outputShape), () => [relu(Reg.OutputPtr)])
-        )
-    else
-        unsupported("activation: " + config.activation)
+    addActivation(res, layer)
 
     return res
 }
@@ -545,6 +571,89 @@ function compileMaxPooling2D(layer: tf.layers.Layer) {
     ]
 }
 
+
+function compileDense(layer: tf.layers.Layer) {
+    const config = layer.getConfig() as unknown as tfi.DenseLayerArgs
+    const info = getLayerInfo(layer)
+
+    const maxChunk = (numFPRegs >> 1) - 2
+    const memReg0 = Reg.S1
+    const flashReg0 = memReg0 + maxChunk
+
+    if (info.model.opts.verbose)
+        console.log(info.inputShape, info.outputShape, config)
+
+    if (info.inputShape.length != 2)
+        unsupported("inputShape: " + info.inputShape.length)
+
+    if (config.dtype && config.dtype != "float32")
+        unsupported("dtype: " + config.dtype)
+
+    const weights = layer.weights[0].read().arraySync() as number[][]
+    //console.log(weights)
+
+    const inpsize = info.inputShape[1]
+
+    assert(weights.length == inpsize, "IH")
+    assert(weights[0].length == config.units, "UN")
+
+    const weightData = info.model.weights
+    const weightsIdx = weightData.length
+    const bias = config.useBias ? layer.weights[1].read().arraySync() as number[] : null
+    //console.log(bias)
+
+    const addParam = (v: number) => {
+        assert(v != null)
+        weightData.push(v)
+    }
+
+    for (let f = 0; f < config.units; f++) {
+        if (bias)
+            addParam(bias[f])
+        for (let i = 0; i < inpsize; ++i)
+            addParam(weights[i][f])
+    }
+
+    const res = [
+        loadWeightAddr(Reg.KernelPtr, weightsIdx),
+        loadDataAddr(Reg.OutputPtr, info.outputOff),
+        repeat(config.units, filt => {
+            const res: Op[] = []
+
+            // set bias
+            if (config.useBias)
+                res.push(load(Reg.S0, 1, Reg.KernelPtr, true))
+            else
+                res.push(load0(Reg.S0))
+
+            res.push(loadDataAddr(Reg.InputPtr, info.inputOff))
+
+            const addChunk = (len: number) => flatten(
+                load(memReg0, len, Reg.InputPtr, true),
+                load(flashReg0, len, Reg.KernelPtr, true),
+                U.range(len + 1).map(i => [
+                    i < len ? vmul(memReg0 + i, memReg0 + i, flashReg0 + i) : null,
+                    i >= 2 ? vadd(Reg.S0, Reg.S0, memReg0 + i - 1) : null
+                ])
+            )
+
+            const numRep = (inpsize / maxChunk) | 0
+            if (numRep > 0)
+                res.push(repeat(numRep, () => addChunk(maxChunk)))
+            const left = inpsize - numRep * maxChunk
+            if (left > 0)
+                U.pushRange(res, addChunk(left))
+
+            res.push(store(Reg.OutputPtr, Reg.S0, 1, true))
+
+            return res
+        })]
+
+    addActivation(res, layer)
+
+    return res
+}
+
 function noop(l: tf.layers.Layer): Op[] {
     return []
 }
@@ -560,6 +669,7 @@ export function shapeElts(shape: tf.Shape) {
 const compilers: SMap<(l: tf.layers.Layer) => Op[]> = {
     Conv2D: compileConv2D,
     MaxPooling2D: compileMaxPooling2D,
+    Dense: compileDense,
     Dropout: noop,
     Flatten: noop,
 }
@@ -645,6 +755,17 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
     const mem = new Float32Array(weightOff + ${modelInfo.weights.length})
     mem.fill(1000.2342)
     mem.set(weights, weightOff)
+    function softmax(ptr, len) {
+        console.log("softmax",mem.slice(ptr,ptr+len))
+        let max = mem[ptr]
+        for (let i = 1; i < len; ++i)
+            max = Math.max(mem[ptr + i], max)
+        let sum = 0
+        for (let i = 0; i < len; ++i)
+            sum += (mem[ptr + i] = Math.exp(mem[ptr + i] - max))
+        for (let i = 0; i < len; ++i)
+            mem[ptr + i] /= sum
+    }
     return (inputs => {
         if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).inputShape)})
             throw new Error("invalid input size")

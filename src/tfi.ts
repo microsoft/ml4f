@@ -14,6 +14,7 @@ export declare interface LayerArgs {
 
 export declare interface DenseLayerArgs extends LayerArgs {
     activation?: ActivationIdentifier;
+    units: number;
     useBias?: boolean;
 }
 
