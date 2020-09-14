@@ -65,14 +65,37 @@ function sampleModel() {
         kernelInitializer: 'varianceScaling'
     }));
 
+    model.add(tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }));
+    model.add(tf.layers.dropout({ rate: 0.1 }));
+
     model.add(tf.layers.conv2d({
         kernelSize: [2, 1],
         filters: 16,
         strides: 1,
-        padding: 'valid',
         activation: 'relu',
         kernelInitializer: 'varianceScaling'
     }));
+    //model.add(tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }));
+    model.add(tf.layers.dropout({ rate: 0.1 }));
+
+    model.add(tf.layers.conv2d({
+        kernelSize: [2, 1],
+        filters: 16,
+        strides: 1,
+        activation: 'relu',
+        kernelInitializer: 'varianceScaling'
+    }));
+    model.add(tf.layers.dropout({ rate: 0.1 }));
+
+    model.add(tf.layers.flatten());
+
+    /*
+    model.add(tf.layers.dense({
+        units: classNames.length,
+        kernelInitializer: 'varianceScaling',
+        activation: 'softmax'
+    }));
+    */
 
     const optimizer = tf.train.adam();
     model.compile({
@@ -147,7 +170,7 @@ async function run() {
     compileModel(sample, { verbose: true })
     compareModel(sample, "sample")
 
-    for (let i = 0; i < 100; ++i) {
+    for (let i = 0; i < 0; ++i) {
         const { model, desc } = randomModel()
         console.log(desc)
         compareModel(model, desc)
@@ -162,9 +185,9 @@ function compareModel(m: tf.LayersModel, desc: string) {
         const randomInput = randomTensor(m.inputs[0].shape)
         const resTensor = m.predict(randomInput) as tf.Tensor
         const res = resTensor.flatten().arraySync()
-        // console.log(res)
+        //console.log(res)
         const res2 = fn(randomInput.flatten().arraySync())
-        // console.log(res2)
+        //console.log(res2)
 
         let numerr = 0
         for (let i = 0; i < res2.length; ++i) {

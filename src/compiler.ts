@@ -20,11 +20,12 @@ enum OpCode {
     repeat,
     loadWeightAddr,
     loadDataAddr,
-    advancePtr,
+    addPtr,
     loadConst,
     load,
     store,
     vmul,
+    vmax,
     vadd,
     relu,
 }
@@ -38,6 +39,7 @@ enum Reg {
     OutputPtr,
     KernelPtr,
     Index0 = 300,
+    Tmp0 = 400,
 }
 
 interface Op {
@@ -50,9 +52,8 @@ interface Op {
     body?: Op[]
 }
 
-
-
-const numRegs = 32
+const numFPRegs = 32
+const numTmpRegs = 8
 
 function unsupported(msg: string) {
     debugger
@@ -83,6 +84,8 @@ function indent(s: string) {
 function reg(r: Reg) {
     if (r <= Reg.S31)
         return "s" + (r - Reg.S0)
+    if (r >= Reg.Tmp0)
+        return "tmp" + (r - Reg.Tmp0)
     if (r >= Reg.Index0)
         return "idx" + (r - Reg.Index0)
     switch (r) {
@@ -111,7 +114,7 @@ function numCycles(ops: Op[]): number {
             case OpCode.loadDataAddr:
                 cycles += 2
                 break
-            case OpCode.advancePtr:
+            case OpCode.addPtr:
                 if (op.num == 1)
                     cycles += 1
                 else
@@ -131,6 +134,9 @@ function numCycles(ops: Op[]): number {
             case OpCode.relu:
                 cycles += 5
                 break
+            case OpCode.vmax:
+                cycles += 4
+                break
             case OpCode.vmul:
             case OpCode.vadd:
                 if (op.src === prevDst || op.srcAlt === prevDst)
@@ -149,6 +155,7 @@ function numCycles(ops: Op[]): number {
 function toJS(op: Op): string {
     const dst = op.dst == null ? null : reg(op.dst)
     const src = op.src == null ? null : reg(op.src)
+    const srcAlt = op.srcAlt == null ? null : reg(op.srcAlt)
 
     switch (op.opcode) {
         case OpCode.repeat:
@@ -157,10 +164,10 @@ function toJS(op: Op): string {
             return `${dst} = weightOff + ${op.num}\n`
         case OpCode.loadDataAddr:
             return `${dst} = dataOff + ${op.num}\n`
-        case OpCode.advancePtr:
+        case OpCode.addPtr:
             if (op.src == null)
-                return `${dst} += ${op.num}\n`
-            return `${dst} += ${reg(op.src)}${op.num == 1 ? "" : " * " + op.num}\n`
+                return `${dst} = ${srcAlt} + ${op.num}\n`
+            return `${dst} = ${srcAlt} + ${src}${op.num == 1 ? "" : " * " + op.num}\n`
         case OpCode.loadConst:
             return `${dst} = ${op.num}\n`
         case OpCode.load: {
@@ -184,9 +191,11 @@ function toJS(op: Op): string {
         case OpCode.relu:
             return `if (mem[${dst}] < 0) mem[${dst}] = 0; ${dst}++\n`
         case OpCode.vmul:
-            return `${dst} = ${src} * ${reg(op.srcAlt)}\n`
+            return `${dst} = ${src} * ${srcAlt}\n`
         case OpCode.vadd:
-            return `${dst} = ${src} + ${reg(op.srcAlt)}\n`
+            return `${dst} = ${src} + ${srcAlt}\n`
+        case OpCode.vmax:
+            return `${dst} = Math.max(${src}, ${srcAlt})\n`
         default:
             throw new Error("bad op " + op.opcode)
     }
@@ -225,11 +234,13 @@ function loadDataAddr(dst: Reg, idx: number): Op {
     }
 }
 
-function advancePtr(dst: Reg, idx: Reg | null, mult = 1): Op {
+function addPtr(dst: Reg, idx: Reg | null, mult = 1, base?: Reg): Op {
+    if (!base) base = dst
     return {
-        opcode: OpCode.advancePtr,
+        opcode: OpCode.addPtr,
         dst,
         src: idx,
+        srcAlt: base,
         num: mult
     }
 }
@@ -279,6 +290,15 @@ function vmul(dst: Reg, a: Reg, b: Reg) {
     }
 }
 
+function vmax(dst: Reg, a: Reg, b: Reg) {
+    return {
+        opcode: OpCode.vmax,
+        dst,
+        src: a,
+        srcAlt: b,
+    }
+}
+
 function vadd(dst: Reg, a: Reg, b: Reg) {
     return {
         opcode: OpCode.vadd,
@@ -310,11 +330,9 @@ function flatten(...args: (Op | Op[] | Op[][])[]) {
     return res
 }
 
-function compileConv2D(layer: tf.layers.Layer) {
-    const config = layer.getConfig() as unknown as tfi.ConvLayerArgs
+function validateConfig(layer: tf.layers.Layer) {
+    const config = layer.getConfig() as unknown as (tfi.Pooling2DLayerArgs | tfi.BaseConvLayerArgs)
     const info = getLayerInfo(layer)
-    const memRegs = numRegs >> 1
-    const flashRegs = numRegs >> 1
 
     if (info.model.opts.verbose)
         console.log(info.inputShape, info.outputShape, config)
@@ -325,6 +343,15 @@ function compileConv2D(layer: tf.layers.Layer) {
         unsupported("dataFormat: " + config.dataFormat)
     if (config.dtype && config.dtype != "float32")
         unsupported("dtype: " + config.dtype)
+}
+
+function compileConv2D(layer: tf.layers.Layer) {
+    const config = layer.getConfig() as unknown as tfi.ConvLayerArgs
+    const info = getLayerInfo(layer)
+    const memRegs = numFPRegs >> 1
+    const flashRegs = numFPRegs >> 1
+
+    validateConfig(layer)
 
     const weights = layer.weights[0].read().arraySync() as number[][][][]
 
@@ -376,7 +403,7 @@ function compileConv2D(layer: tf.layers.Layer) {
 
             const setOutput = (res: Op[]) => {
                 res.push(loadDataAddr(Reg.OutputPtr, info.outputOff))
-                res.push(advancePtr(Reg.OutputPtr, filt))
+                res.push(addPtr(Reg.OutputPtr, filt))
             }
 
             // set bias
@@ -389,7 +416,7 @@ function compileConv2D(layer: tf.layers.Layer) {
             res.push(
                 repeat(info.outputShape[1] * info.outputShape[2], () => [
                     store(Reg.OutputPtr, 0, 1, false),
-                    advancePtr(Reg.OutputPtr, null, config.filters)
+                    addPtr(Reg.OutputPtr, null, config.filters)
                 ]))
 
             res.push(repeat(kh, kline => {
@@ -403,7 +430,7 @@ function compileConv2D(layer: tf.layers.Layer) {
                     res.push(load(memRegs, chunk, Reg.KernelPtr, true))
 
                     res.push(loadDataAddr(Reg.InputPtr, info.inputOff + kernOff))
-                    res.push(advancePtr(Reg.InputPtr, kline, inpw * inpch))
+                    res.push(addPtr(Reg.InputPtr, kline, inpw * inpch))
 
                     setOutput(res)
 
@@ -413,7 +440,7 @@ function compileConv2D(layer: tf.layers.Layer) {
                     res.push(repeat(info.outputShape[1], () =>
                         [repeat(info.outputShape[2], () => flatten(
                             load(Reg.S0, chunk, Reg.InputPtr, true),
-                            advancePtr(Reg.InputPtr, null, wSkip - chunk),
+                            addPtr(Reg.InputPtr, null, wSkip - chunk),
                             U.range(chunk + 1).map(i =>
                                 [
                                     i < chunk ? vmul(i, i, i + memRegs) : null,
@@ -422,9 +449,9 @@ function compileConv2D(layer: tf.layers.Layer) {
                             load(Reg.S1, 1, Reg.OutputPtr, false),
                             vadd(Reg.S0, Reg.S0, Reg.S1),
                             store(Reg.OutputPtr, Reg.S0, 1, false),
-                            advancePtr(Reg.OutputPtr, null, config.filters)
+                            addPtr(Reg.OutputPtr, null, config.filters)
                         )),
-                        advancePtr(Reg.InputPtr, null, hSkip - info.outputShape[2] * wSkip)]))
+                        addPtr(Reg.InputPtr, null, hSkip - info.outputShape[2] * wSkip)]))
                 }
 
                 return res
@@ -445,6 +472,79 @@ function compileConv2D(layer: tf.layers.Layer) {
     return res
 }
 
+function compileMaxPooling2D(layer: tf.layers.Layer) {
+    const config = layer.getConfig() as unknown as tfi.Pooling2DLayerArgs
+    const info = getLayerInfo(layer)
+
+    validateConfig(layer)
+
+    const kh = config.poolSize[0]
+    const kw = config.poolSize[1]
+
+    const strh = config.strides[0]
+    const strw = config.strides[1]
+
+    const inph = info.inputShape[1]
+    const inpw = info.inputShape[2]
+    const numch = info.inputShape[3]
+
+    // padding not implemented yet
+    assert(kh <= inph, "KH2")
+    assert(kw <= inpw, "KW2")
+
+    assert(info.outputShape[3] == info.inputShape[3], "CH")
+
+    if (kh - 1 > numTmpRegs)
+        unsupported(`too high MaxPool2D area`)
+
+    const lineW = inpw * numch
+
+    return [
+        repeat(numch, filt => {
+            const res = [
+                loadDataAddr(Reg.OutputPtr, info.outputOff),
+                addPtr(Reg.OutputPtr, filt),
+                loadDataAddr(Reg.InputPtr, info.inputOff),
+                addPtr(Reg.InputPtr, filt),
+            ]
+
+            const ptrRegs = U.range(kh - 1).map(i => Reg.Tmp0 + i)
+            ptrRegs.unshift(Reg.InputPtr)
+
+            for (let i = 1; i < kh; ++i)
+                res.push(addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr))
+
+            res.push(
+                repeat(info.outputShape[1], () => flatten(
+                    repeat(info.outputShape[2], () => {
+                        const res: Op[] = []
+                        for (let i = 0; i < kh; ++i) {
+                            for (let j = 0; j < kw; ++j) {
+                                const reg = i == 0 && j == 0 ? Reg.S0 : Reg.S1
+                                res.push(
+                                    load(reg, 1, ptrRegs[i], true),
+                                    addPtr(ptrRegs[i], null, numch - 1)
+                                )
+                                if (reg != Reg.S0)
+                                    res.push(vmax(Reg.S0, Reg.S0, reg))
+                            }
+                            res.push(
+                                addPtr(ptrRegs[i], null, (strw - kw) * numch)
+                            )
+                        }
+                        res.push(
+                            store(Reg.OutputPtr, Reg.S0, 1, true),
+                            addPtr(Reg.OutputPtr, null, numch - 1)
+                        )
+                        return res
+                    }),
+                    ptrRegs.map(r => addPtr(r, null, strh * lineW - info.outputShape[2] * strw * numch)))))
+
+            return res
+        })
+    ]
+}
+
 function noop(l: tf.layers.Layer): Op[] {
     return []
 }
@@ -459,6 +559,7 @@ export function shapeElts(shape: tf.Shape) {
 
 const compilers: SMap<(l: tf.layers.Layer) => Op[]> = {
     Conv2D: compileConv2D,
+    MaxPooling2D: compileMaxPooling2D,
     Dropout: noop,
     Flatten: noop,
 }
@@ -549,7 +650,8 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
             throw new Error("invalid input size")
         mem.set(inputs, dataOff)
         let input, output, kernel
-        let ${U.range(numRegs).map(r => "s" + r).join(", ")}
+        let ${U.range(numTmpRegs).map(r => "tmp" + r).join(", ")}
+        let ${U.range(numFPRegs).map(r => "s" + r).join(", ")}
 
 ${toJSs(flat)}
         

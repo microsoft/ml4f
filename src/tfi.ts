@@ -23,9 +23,9 @@ export type DataFormat = 'channelsFirst' | 'channelsLast';
 
 export declare interface BaseConvLayerArgs extends LayerArgs {
     kernelSize: number[];
-    strides?: number[];
-    padding?: PaddingMode;
-    dataFormat?: DataFormat;
+    strides: number[];
+    padding: PaddingMode;
+    dataFormat: DataFormat;
 
     dilationRate?: number | [number] | [number, number] | [number, number, number];
     activation?: ActivationIdentifier;
@@ -34,4 +34,11 @@ export declare interface BaseConvLayerArgs extends LayerArgs {
 
 export declare interface ConvLayerArgs extends BaseConvLayerArgs {
     filters: number;
+}
+
+export declare interface Pooling2DLayerArgs extends LayerArgs {
+    poolSize: [number, number];
+    strides: [number, number];
+    padding: PaddingMode;
+    dataFormat: DataFormat;
 }
