@@ -43,6 +43,7 @@ enum Reg {
     KernelPtr,
     Index0 = 300,
     Tmp0 = 400,
+    Zero = 500,
 }
 
 interface Op {
@@ -58,6 +59,7 @@ interface Op {
 
 const numFPRegs = 32
 const numTmpRegs = 8
+const unrollLimit = 10
 
 function unsupported(msg: string) {
     debugger
@@ -88,6 +90,8 @@ function indent(s: string) {
 function reg(r: Reg) {
     if (r <= Reg.S31)
         return "s" + (r - Reg.S0)
+    if (r >= Reg.Zero)
+        return r - Reg.Zero
     if (r >= Reg.Tmp0)
         return "tmp" + (r - Reg.Tmp0)
     if (r >= Reg.Index0)
@@ -181,19 +185,25 @@ function toJS(op: Op): string {
         case OpCode.load: {
             let r = ""
             let dp = op.dst + 0
-            for (let i = 0; i < op.num; ++i)
-                r += `${reg(dp++)} = mem[${src} + ${i}]\n`
-            if (op.adv)
-                r += `${src} += ${op.num}\n`
+            if (op.adv) {
+                for (let i = 0; i < op.num; ++i)
+                    r += `${reg(dp++)} = mem[${src}++]\n`
+            } else {
+                for (let i = 0; i < op.num; ++i)
+                    r += `${reg(dp++)} = mem[${src} + ${i}]\n`
+            }
             return r
         }
         case OpCode.store: {
             let r = ""
             let dp = op.src + 0
-            for (let i = 0; i < op.num; ++i)
-                r += `mem[${dst} + ${i}] = ${reg(dp++)}\n`
-            if (op.adv)
-                r += `${dst} += ${op.num}\n`
+            if (op.adv) {
+                for (let i = 0; i < op.num; ++i)
+                    r += `mem[${dst}++] = ${reg(dp++)}\n`
+            } else {
+                for (let i = 0; i < op.num; ++i)
+                    r += `mem[${dst} + ${i}] = ${reg(dp++)}\n`
+            }
             return r
         }
         case OpCode.relu:
@@ -216,14 +226,21 @@ function toJSs(op: Op[]) {
 }
 
 let repIdx = 0
-function repeat(n: number, f: (idx: Reg) => Op[]): Op {
+function repeatIdx(n: number, f: (idx: Reg) => Op[]): Op {
     const idx = Reg.Index0 + repIdx++
     return {
         opcode: OpCode.repeat,
         dst: idx,
         num: n,
-        body: f(idx)
+        body: f(idx),
+        adv: true
     }
+}
+
+function repeat(n: number, f: () => Op[]): Op {
+    const r = repeatIdx(n, f)
+    r.adv = false
+    return r
 }
 
 function loadWeightAddr(dst: Reg, idx: number): Op {
@@ -432,7 +449,7 @@ function compileConv2D(layer: tf.layers.Layer) {
 
     const res = [
         loadWeightAddr(Reg.KernelPtr, weightsIdx),
-        repeat(config.filters, filt => {
+        repeatIdx(config.filters, filt => {
             const res: Op[] = []
 
             const setOutput = (res: Op[]) => {
@@ -453,7 +470,7 @@ function compileConv2D(layer: tf.layers.Layer) {
                     addPtr(Reg.OutputPtr, null, config.filters)
                 ]))
 
-            res.push(repeat(kh, kline => {
+            res.push(repeatIdx(kh, kline => {
                 const res: Op[] = []
                 const kernSz = kw * inpch
                 let chunk = 0
@@ -527,7 +544,7 @@ function compileMaxPooling2D(layer: tf.layers.Layer) {
     const lineW = inpw * numch
 
     return [
-        repeat(numch, filt => {
+        repeatIdx(numch, filt => {
             const res = [
                 loadDataAddr(Reg.OutputPtr, info.outputOff),
                 addPtr(Reg.OutputPtr, filt),
@@ -571,7 +588,6 @@ function compileMaxPooling2D(layer: tf.layers.Layer) {
         })
     ]
 }
-
 
 function compileDense(layer: tf.layers.Layer) {
     const config = layer.getConfig() as unknown as tfi.DenseLayerArgs
@@ -618,7 +634,7 @@ function compileDense(layer: tf.layers.Layer) {
     const res = [
         loadWeightAddr(Reg.KernelPtr, weightsIdx),
         loadDataAddr(Reg.OutputPtr, info.outputOff),
-        repeat(config.units, filt => {
+        repeat(config.units, () => {
             const res: Op[] = []
 
             // set bias
@@ -659,6 +675,70 @@ function noop(l: tf.layers.Layer): Op[] {
     return []
 }
 
+function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
+    const repl = (r: Reg) => {
+        if (!r) return r
+        if (replMap[r] != undefined)
+            return replMap[r]
+        return r
+    }
+
+    const res: Op[] = []
+    for (let op of ops) {
+        op = {
+            opcode: op.opcode,
+            dst: repl(op.dst),
+            src: repl(op.src),
+            srcAlt: repl(op.srcAlt),
+            adv: op.adv,
+            num: op.num,
+            body: op.body,
+            fname: op.fname
+        }
+        switch (op.opcode) {
+            case OpCode.repeat:
+                if (op.num == 0) { }
+                else if (op.num == 1) {
+                    replMap[op.dst] = Reg.Zero
+                    U.pushRange(res, optimize(op.body, replMap))
+                } else {
+                    op.body = optimize(op.body, replMap)
+
+                    const stripLoop = op.num * op.body.length < unrollLimit * 2
+                    const canUnroll = !op.adv && 2 * op.body.length < unrollLimit
+
+                    if (stripLoop) {
+                        for (let i = 0; i < op.num; ++i) {
+                            replMap[op.dst] = Reg.Zero + i
+                            U.pushRange(res, optimize(op.body, replMap))
+                        }
+                    } else if (canUnroll) {
+                        const unrollCnt = (unrollLimit / op.body.length) | 0
+                        const tmp = op.body.slice()
+                        for (let i = 1; i < unrollCnt; ++i)
+                            U.pushRange(op.body, tmp)
+                        const newnum = (op.num / unrollCnt) | 0
+                        res.push(op)
+                        const left = op.num - newnum * unrollCnt
+                        op.num = newnum
+                        for (let i = 0; i < left; ++i)
+                            U.pushRange(res, tmp)
+                    } else {
+                        res.push(op)
+                    }
+                }
+                break
+            case OpCode.addPtr:
+                if (op.dst == op.srcAlt && (op.num == 0 || op.src == Reg.Zero)) { }
+                else res.push(op)
+                break
+            default:
+                res.push(op)
+        }
+    }
+    return res
+}
+
 export function shapeElts(shape: tf.Shape) {
     let r = 1
     for (const s of shape)
@@ -690,6 +770,8 @@ export interface Options {
 }
 
 export function compileModel(m: tf.LayersModel, opts: Options = {}) {
+    repIdx = 0
+
     if (opts.verbose)
         m.summary()
 
@@ -738,9 +820,12 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
 
         const f = compilers[l.getClassName()]
         if (f) {
-            const tmp = f(l)
+            let tmp = f(l)
+            const c0 = numCycles(tmp)
+            tmp = optimize(tmp)
+            const c1 = numCycles(tmp)
             if (opts.verbose)
-                console.log(l.getClassName(), numCycles(tmp), info.inputShape, info.inputOff, info.outputOff)
+                console.log(l.getClassName(), c0, c1, info.inputShape, info.inputOff, info.outputOff)
             ops.push(tmp)
         } else
             console.log("unsupported layer: ", l.getClassName())
