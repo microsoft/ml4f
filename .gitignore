@@ -4,3 +4,4 @@ built/
 tmp
 *.o
 c/*.s
+c/*.elf
