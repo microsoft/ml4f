@@ -156,24 +156,31 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     let ind = ""
     const byteOffset = (n: number) => 4 * (n + descWords)
     const header = [
-        "0x30470f62  ; magic",
-        `_start_model - _header ; header size`,
-        `_end - _header ; total size of compiled object`,
-        `_weights - _header ; offset of weights`,
-        `${byteOffset(modelInfo.arenaSize)} ; arena size`,
-        `${byteOffset(0)}  ; offset of input data`,
-        `${byteOffset(modelInfo.outputOffset)}  ; offset of output data`,
+        "0x30470f62  // magic",
+        `_start_model - _header // header size`,
+        `_end - _header // total size of compiled object`,
+        `_weights - _header // offset of weights`,
+        `${byteOffset(modelInfo.arenaSize)} // arena size`,
+        `${byteOffset(0)}  // offset of input data`,
+        `${byteOffset(modelInfo.outputOffset)}  // offset of output data`,
     ]
     for (let i = 0; i < 5; ++i)
-        header.push(`0 ; padding`)
+        header.push(`0 // padding`)
 
     addShape(modelInfo.inputShape, "input")
     addShape(modelInfo.outputShape, "output")
 
     let regAlloc: SMap<number> = {}
     let resText = `
-; ABI: r0 -> points to magic, r1 -> points to RAM arena
-    .start 0x70000000             ; fake but aligned
+    .cpu cortex-m4
+    .text
+    .arch armv7e-m
+    .syntax unified
+    .thumb
+    .thumb_func
+    .fpu fpv4-sp-d16
+// ABI: r0 -> points to magic, r1 -> points to RAM arena
+    // .start 0x70000000             // fake but aligned
 _header:
 `
     for (const h of header)
@@ -187,27 +194,30 @@ _header:
     regAlloc[Reg.DataDescPtr] = 7
 
     write(`_start_model:`)
+    write(`push {r4-r12,lr}`)
     write(`mov ${reg(Reg.DataDescPtr)}, r1`)
-    write(`ldr r1, [r0, #4*3] ; weight offset`)
-    write(`adds r1, r0 ; weight addr`)
+    write(`ldr r1, [r0, #4*3] // weight offset`)
+    write(`adds r1, r0 // weight addr`)
     write(`str r1, [${reg(Reg.DataDescPtr)}, #${weightAddrDO}]`)
 
     compiles(ops)
+
+    write(`pop {r4-r12,pc}`)
 
     write(".balign 4")
     write("_weights:")
     for (const w of modelInfo.weights)
         write(`.float ${w}`)
 
-    write("_end")
+    write("_end:")
 
     return resText
 
     function addShape(shape: number[], lbl: string) {
         for (const shp of shape)
             if (shp != null)
-                header.push(`${shp} ; ${lbl} shape`)
-        header.push(`0 ; end of ${lbl} shape`)
+                header.push(`${shp} // ${lbl} shape`)
+        header.push(`0 // end of ${lbl} shape`)
     }
 
     function alloc(r: Reg, f?: () => void) {
@@ -276,7 +286,7 @@ _header:
 
     function addConst(dst: string, src: string, num: number) {
         if (num < (1 << 12)) {
-            write(`adds ${dst}, ${src}, #${num}`)
+            write(`addw ${dst}, ${src}, #${num}`)
         } else {
             loadConst("r1", num)
             write(`adds ${dst}, ${src},r1`)
@@ -291,7 +301,7 @@ _header:
         if (op.num == 1)
             return `{${reg(op.dst)}}`
         else
-            return `{${reg(op.dst)}-${reg(op.dst - 1)}}`
+            return `{${reg(op.dst)}-${reg(op.dst + op.num - 1)}}`
     }
 
     function compile(op: Op) {
@@ -307,7 +317,7 @@ _header:
                     dst = reg(op.dst)
                     const lbl = `.l.${lblid++}`
                     loadConst(dst, op.isDef ? 0 : op.num)
-                    write(`${lbl}:  ; rep ${op.num}`)
+                    write(`${lbl}:  // rep ${op.num}`)
                     compiles(op.body)
                     if (op.isDef) {
                         write(`adds ${dst}, #1`)
@@ -336,7 +346,21 @@ _header:
                 } else {
                     if (op.num != 1) {
                         loadConst("r0", op.num * 4)
-                        write(`muls r0, ${src}`)
+                        if (src[0] == '#') {
+                            const n = +src.slice(1)
+                            if (n == 0)
+                                loadConst("r0", 0)
+                            else if (n == 1) {
+                                // do nothing
+                            } else if (n == 2) {
+                                write(`adds r0,r0`)
+                            } else {
+                                loadConst("r1", n)
+                                write(`muls r0, r1`)
+                            }
+                        } else {
+                            write(`muls r0, ${src}`)
+                        }
                     } else {
                         write(`lsls r0, ${src}, #2`)
                     }
@@ -362,16 +386,16 @@ _header:
                 write(`stm ${dst}!, {r0}`)
                 break
             case OpCode.vmul:
-                write(`vmul ${dst}, ${src}, ${srcAlt}`)
+                write(`vmul.f32 ${dst}, ${src}, ${srcAlt}`)
                 break
             case OpCode.vadd:
-                write(`vadd ${dst}, ${src}, ${srcAlt}`)
+                write(`vadd.f32 ${dst}, ${src}, ${srcAlt}`)
                 break
             case OpCode.vmax:
                 assert(dst != srcAlt)
                 if (src != dst)
                     write(`vmov ${dst}, ${src}`)
-                write(`vcmp ${dst}, ${srcAlt}`)
+                write(`vcmp.f32 ${dst}, ${srcAlt}`)
                 write(`vmrs APSR_nzcv, FPSCR`)
                 write(`it mi`)
                 write(`vmovmi ${dst}, ${srcAlt}`)
