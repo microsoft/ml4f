@@ -6,6 +6,10 @@ import * as U from './util'
 
 interface ModelInfo {
     weights: number[];
+    arenaSize: number;
+    inputShape: number[];
+    outputShape: number[];
+    outputOffset: number;
     opts: Options;
 }
 
@@ -23,7 +27,7 @@ enum OpCode {
     loadWeightAddr,
     loadDataAddr,
     addPtr,
-    loadConst,
+    loadFConst,
     load,
     store,
     vmul,
@@ -41,6 +45,7 @@ enum Reg {
     InputPtr = 200,
     OutputPtr,
     KernelPtr,
+    DataDescPtr,
     Index0 = 300,
     Tmp0 = 400,
     Zero = 500,
@@ -52,7 +57,8 @@ interface Op {
     src?: Reg
     srcAlt?: Reg
     num?: number
-    adv?: boolean
+    isDef?: boolean
+    increment?: boolean
     body?: Op[]
     fname?: string
 }
@@ -87,27 +93,6 @@ function indent(s: string) {
     return "  " + s.replace(/\n$/, "").replace(/\n/g, "\n  ") + "\n"
 }
 
-function reg(r: Reg) {
-    if (r <= Reg.S31)
-        return "s" + (r - Reg.S0)
-    if (r >= Reg.Zero)
-        return r - Reg.Zero
-    if (r >= Reg.Tmp0)
-        return "tmp" + (r - Reg.Tmp0)
-    if (r >= Reg.Index0)
-        return "idx" + (r - Reg.Index0)
-    switch (r) {
-        case Reg.InputPtr:
-            return "input"
-        case Reg.KernelPtr:
-            return "kernel"
-        case Reg.OutputPtr:
-            return "output"
-        default:
-            assert(false, "bad reg " + r)
-    }
-}
-
 function numCycles(ops: Op[]): number {
     let cycles = 0
     let prevDst: Reg = null
@@ -128,7 +113,7 @@ function numCycles(ops: Op[]): number {
                 else
                     cycles += 3
                 break
-            case OpCode.loadConst:
+            case OpCode.loadFConst:
                 if (op.num == 0 || op.num == 1)
                     cycles += 1
                 else
@@ -164,6 +149,244 @@ function numCycles(ops: Op[]): number {
     return cycles
 }
 
+function toThumb(modelInfo: ModelInfo, ops: Op[]) {
+    const weightAddrDO = 0
+    const descWords = 1
+
+    let ind = ""
+    const byteOffset = (n: number) => 4 * (n + descWords)
+    const header = [
+        "0x30470f62  ; magic",
+        `_start_model - _header ; header size`,
+        `_end - _header ; total size of compiled object`,
+        `_weights - _header ; offset of weights`,
+        `${byteOffset(modelInfo.arenaSize)} ; arena size`,
+        `${byteOffset(0)}  ; offset of input data`,
+        `${byteOffset(modelInfo.outputOffset)}  ; offset of output data`,
+    ]
+    for (let i = 0; i < 5; ++i)
+        header.push(`0 ; padding`)
+
+    addShape(modelInfo.inputShape, "input")
+    addShape(modelInfo.outputShape, "output")
+
+    let regAlloc: SMap<number> = {}
+    let resText = `
+; ABI: r0 -> points to magic, r1 -> points to RAM arena
+    .start 0x70000000             ; fake but aligned
+_header:
+`
+    for (const h of header)
+        write(`.word ${h}`)
+
+    let lblid = 0
+
+    regAlloc[Reg.InputPtr] = 1
+    regAlloc[Reg.OutputPtr] = 2
+    regAlloc[Reg.KernelPtr] = 3
+    regAlloc[Reg.DataDescPtr] = 7
+
+    write(`_start_model:`)
+    write(`mov ${reg(Reg.DataDescPtr)}, r1`)
+    write(`ldr r1, [r0, #4*3] ; weight offset`)
+    write(`adds r1, r0 ; weight addr`)
+    write(`str r1, [${reg(Reg.DataDescPtr)}, #${weightAddrDO}]`)
+
+    compiles(ops)
+
+    write(".balign 4")
+    write("_weights:")
+    for (const w of modelInfo.weights)
+        write(`.float ${w}`)
+
+    write("_end")
+
+    return resText
+
+    function addShape(shape: number[], lbl: string) {
+        for (const shp of shape)
+            if (shp != null)
+                header.push(`${shp} ; ${lbl} shape`)
+        header.push(`0 ; end of ${lbl} shape`)
+    }
+
+    function alloc(r: Reg, f?: () => void) {
+        assert(!regAlloc[r])
+        const copy: SMap<number> = {}
+        const used: SMap<boolean> = {}
+        for (const k of Object.keys(regAlloc)) {
+            copy[k] = regAlloc[k]
+            used[copy[k]] = true
+        }
+        let all = -1
+        for (let i = 4; i <= 12; ++i) {
+            if (!used[i]) {
+                all = i
+                break
+            }
+        }
+        if (all < 0)
+            oops("can't alloc " + r)
+
+        regAlloc[r] = all
+
+        if (f) {
+            const pind = ind
+            try {
+                ind += "    "
+                f()
+            } finally {
+                ind = pind
+                regAlloc = copy
+            }
+        }
+    }
+
+    function write(asm: string) {
+        if (isFake(asm))
+            oops("wrong reg: " + asm)
+        resText += ind + asm + "\n"
+    }
+
+    function oops(msg: string) {
+        throw new Error("internal thumb error: " + msg)
+    }
+
+    function reg(r: Reg) {
+        if (r == null)
+            return "<fake>"
+        if (r <= Reg.S31)
+            return "s" + (r - Reg.S0)
+        if (r >= Reg.Zero)
+            return "#" + (r - Reg.Zero)
+        const id = regAlloc[r]
+        if (id == undefined)
+            return "<fake:" + regName(r) + ">"
+        return "r" + id
+    }
+
+    function isFake(r: string) {
+        return r.indexOf("<fake") >= 0
+    }
+
+    function loadConst(dst: string, num: number) {
+        // TODO?
+        write(`mov ${dst}, #${num}`)
+    }
+
+    function addConst(dst: string, src: string, num: number) {
+        if (num < (1 << 12)) {
+            write(`adds ${dst}, ${src}, #${num}`)
+        } else {
+            loadConst("r1", num)
+            write(`adds ${dst}, ${src},r1`)
+        }
+    }
+
+    function compiles(ops: Op[]) {
+        for (const op of ops) compile(op)
+    }
+
+    function range(op: Op) {
+        if (op.num == 1)
+            return `{${reg(op.dst)}}`
+        else
+            return `{${reg(op.dst)}-${reg(op.dst - 1)}}`
+    }
+
+    function compile(op: Op) {
+        let dst = reg(op.dst)
+        const src = reg(op.src)
+        const srcAlt = reg(op.srcAlt)
+        const incr = op.increment ? "!" : ""
+
+        switch (op.opcode) {
+            case OpCode.repeat:
+                assert(op.num > 1)
+                alloc(op.dst, () => {
+                    dst = reg(op.dst)
+                    const lbl = `.l.${lblid++}`
+                    loadConst(dst, op.isDef ? 0 : op.num)
+                    write(`${lbl}:  ; rep ${op.num}`)
+                    compiles(op.body)
+                    if (op.isDef) {
+                        write(`adds ${dst}, #1`)
+                        write(`cmp ${dst}, #${op.num}`)
+                        write(`blt ${lbl}`)
+                    } else {
+                        write(`subs ${dst}, #1`)
+                        write(`bne ${lbl}`)
+                    }
+                })
+                break
+            case OpCode.loadWeightAddr:
+                write(`ldr r0, [${reg(Reg.DataDescPtr)}, #${weightAddrDO}]`)
+                addConst(dst, "r0", op.num * 4)
+                break
+            case OpCode.loadDataAddr:
+                addConst(dst, reg(Reg.DataDescPtr), byteOffset(op.num))
+                break
+            case OpCode.addPtr:
+                if (isFake(dst) && op.isDef) {
+                    alloc(op.dst)
+                    dst = reg(op.dst)
+                }
+                if (op.src == null) {
+                    addConst(dst, srcAlt, op.num * 4)
+                } else {
+                    if (op.num != 1) {
+                        loadConst("r0", op.num * 4)
+                        write(`muls r0, ${src}`)
+                    } else {
+                        write(`lsls r0, ${src}, #2`)
+                    }
+                    write(`adds ${dst}, ${srcAlt}, r0`)
+                }
+                break
+            case OpCode.loadFConst:
+                write(`vmov ${dst}, #${op.num}f`)
+                break
+            case OpCode.load:
+                write(`vldm ${src}${incr}, ${range(op)}`)
+                break
+            case OpCode.store:
+                write(`vstm ${src}${incr}, ${range(op)}`)
+                break
+            case OpCode.relu:
+                write(`ldr r0, [${dst}]`)
+                // negative check on FP and int is the same
+                write(`cmp r0, #0`)
+                write(`it lt`)
+                // int 0 is same as 0.0f
+                write(`movslt r0, #0`)
+                write(`stm ${dst}!, {r0}`)
+                break
+            case OpCode.vmul:
+                write(`vmul ${dst}, ${src}, ${srcAlt}`)
+                break
+            case OpCode.vadd:
+                write(`vadd ${dst}, ${src}, ${srcAlt}`)
+                break
+            case OpCode.vmax:
+                assert(dst != srcAlt)
+                if (src != dst)
+                    write(`vmov ${dst}, ${src}`)
+                write(`vcmp ${dst}, ${srcAlt}`)
+                write(`vmrs APSR_nzcv, FPSCR`)
+                write(`it mi`)
+                write(`vmovmi ${dst}, ${srcAlt}`)
+                break
+            case OpCode.fcall:
+                write(`mov r0, ${dst}`)
+                loadConst("r1", op.num)
+                write(`bl ${op.fname}`)
+                break
+            default:
+                oops("bad op " + op.opcode)
+        }
+    }
+}
+
 function toJS(op: Op): string {
     const dst = op.dst == null ? null : reg(op.dst)
     const src = op.src == null ? null : reg(op.src)
@@ -180,12 +403,12 @@ function toJS(op: Op): string {
             if (op.src == null)
                 return `${dst} = ${srcAlt} + ${op.num}\n`
             return `${dst} = ${srcAlt} + ${src}${op.num == 1 ? "" : " * " + op.num}\n`
-        case OpCode.loadConst:
+        case OpCode.loadFConst:
             return `${dst} = ${op.num}\n`
         case OpCode.load: {
             let r = ""
             let dp = op.dst + 0
-            if (op.adv) {
+            if (op.increment) {
                 for (let i = 0; i < op.num; ++i)
                     r += `${reg(dp++)} = mem[${src}++]\n`
             } else {
@@ -196,13 +419,13 @@ function toJS(op: Op): string {
         }
         case OpCode.store: {
             let r = ""
-            let dp = op.src + 0
-            if (op.adv) {
+            let dp = op.dst + 0
+            if (op.increment) {
                 for (let i = 0; i < op.num; ++i)
-                    r += `mem[${dst}++] = ${reg(dp++)}\n`
+                    r += `mem[${src}++] = ${reg(dp++)}\n`
             } else {
                 for (let i = 0; i < op.num; ++i)
-                    r += `mem[${dst} + ${i}] = ${reg(dp++)}\n`
+                    r += `mem[${src} + ${i}] = ${reg(dp++)}\n`
             }
             return r
         }
@@ -219,6 +442,36 @@ function toJS(op: Op): string {
         default:
             throw new Error("bad op " + op.opcode)
     }
+
+
+    function reg(r: Reg) {
+        const res = regName(r)
+        if (res[0] === "?")
+            assert(false, "bad reg " + r)
+        return res
+    }
+
+}
+
+function regName(r: Reg) {
+    if (r <= Reg.S31)
+        return "s" + (r - Reg.S0)
+    if (r >= Reg.Zero)
+        return "" + (r - Reg.Zero)
+    if (r >= Reg.Tmp0)
+        return "tmp" + (r - Reg.Tmp0)
+    if (r >= Reg.Index0)
+        return "idx" + (r - Reg.Index0)
+    switch (r) {
+        case Reg.InputPtr:
+            return "input"
+        case Reg.KernelPtr:
+            return "kernel"
+        case Reg.OutputPtr:
+            return "output"
+        default:
+            return "???" + r
+    }
 }
 
 function toJSs(op: Op[]) {
@@ -233,13 +486,13 @@ function repeatIdx(n: number, f: (idx: Reg) => Op[]): Op {
         dst: idx,
         num: n,
         body: f(idx),
-        adv: true
+        isDef: true
     }
 }
 
 function repeat(n: number, f: () => Op[]): Op {
     const r = repeatIdx(n, f)
-    r.adv = false
+    r.isDef = false
     return r
 }
 
@@ -274,7 +527,7 @@ function addPtr(dst: Reg, idx: Reg | null, mult = 1, base?: Reg): Op {
 
 function load0(dst: number): Op {
     return {
-        opcode: OpCode.loadConst,
+        opcode: OpCode.loadFConst,
         dst,
         num: 0.0
     }
@@ -286,17 +539,17 @@ function load(dst: Reg, num: number, src: Reg, adv: boolean): Op {
         dst,
         src,
         num: num,
-        adv
+        increment: adv
     }
 }
 
 function store(dst: Reg, src: Reg, num: number, adv: boolean): Op {
     return {
         opcode: OpCode.store,
-        dst,
-        src,
+        src: dst,
+        dst: src,
         num: num,
-        adv
+        increment: adv
     }
 }
 
@@ -304,7 +557,7 @@ function relu(dst: Reg): Op {
     return {
         opcode: OpCode.relu,
         dst,
-        adv: true
+        increment: true
     }
 }
 
@@ -318,6 +571,8 @@ function vmul(dst: Reg, a: Reg, b: Reg) {
 }
 
 function vmax(dst: Reg, a: Reg, b: Reg) {
+    if (b == dst)
+        [a, b] = [b, a]
     return {
         opcode: OpCode.vmax,
         dst,
@@ -555,8 +810,11 @@ function compileMaxPooling2D(layer: tf.layers.Layer) {
             const ptrRegs = U.range(kh - 1).map(i => Reg.Tmp0 + i)
             ptrRegs.unshift(Reg.InputPtr)
 
-            for (let i = 1; i < kh; ++i)
-                res.push(addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr))
+            for (let i = 1; i < kh; ++i) {
+                const op = addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr)
+                op.isDef = true
+                res.push(op)
+            }
 
             res.push(
                 repeat(info.outputShape[1], () => flatten(
@@ -690,7 +948,8 @@ function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
             dst: repl(op.dst),
             src: repl(op.src),
             srcAlt: repl(op.srcAlt),
-            adv: op.adv,
+            isDef: op.isDef,
+            increment: op.increment,
             num: op.num,
             body: op.body,
             fname: op.fname
@@ -705,7 +964,7 @@ function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
                     op.body = optimize(op.body, replMap)
 
                     const stripLoop = op.num * op.body.length < unrollLimit * 2
-                    const canUnroll = !op.adv && 2 * op.body.length < unrollLimit
+                    const canUnroll = !op.isDef && 2 * op.body.length < unrollLimit
 
                     if (stripLoop) {
                         for (let i = 0; i < op.num; ++i) {
@@ -775,12 +1034,18 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
     if (opts.verbose)
         m.summary()
 
+
+    const inputShape = m.layers[0].batchInputShape
+
     const modelInfo: ModelInfo = {
         weights: [],
+        inputShape,
+        outputShape: null,
+        outputOffset: -1,
+        arenaSize: -1,
         opts
     }
 
-    const inputShape = m.layers[0].batchInputShape
     let maxSize = [shapeElts(inputShape), 0]
     let currIdx = 0
     let prev: LayerInfo
@@ -803,6 +1068,8 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
         prev = info
     }
 
+    modelInfo.outputShape = prev.outputShape
+
     // TODO alignment?
     const midOff = maxSize[0]
     for (const l of m.layers) {
@@ -812,6 +1079,7 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
     }
 
     const arenaSize = maxSize[0] + maxSize[1]
+    modelInfo.arenaSize = arenaSize
 
     const ops: Op[][] = []
 
@@ -834,6 +1102,7 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
     const flat = flatten(ops)
 
     const lastInfo = getLayerInfo(m.layers[m.layers.length - 1])
+    modelInfo.outputOffset = lastInfo.outputOff
 
     let fn = `
 (weights => {
@@ -871,6 +1140,8 @@ ${toJSs(flat)}
     if (opts.verbose) {
         console.log(fn)
         console.log("cycles:", numCycles(flat))
+
+        console.log(toThumb(modelInfo, flat))
     }
 
     const modelFn: (inp: ArrayLike<number>) => Float32Array = (eval(fn))(modelInfo.weights)
