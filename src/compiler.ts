@@ -97,28 +97,49 @@ function indent(s: string) {
 function numCycles(ops: Op[]): number {
     let cycles = 0
     let prevDst: Reg = null
+    const addConst = (k: number) => k < (1 << 12) ? 1 : 2
     for (const op of ops) {
         switch (op.opcode) {
             case OpCode.repeat:
-                cycles += (numCycles(op.body) + 4) * op.num + 1
+                cycles += (numCycles(op.body) + 4 + (op.isDef ? 1 : 0)) * op.num + 1
                 break
             case OpCode.loadWeightAddr:
-                cycles += 2
+                cycles += 2 + addConst(op.num * 4)
                 break
             case OpCode.loadDataAddr:
-                cycles += 2
+                cycles += addConst(op.num * 4 + 8)
                 break
             case OpCode.addPtr:
+                if (op.src == null)
+                    cycles += addConst(op.num * 4)
+                else {
+                    if (op.num != 1) {
+                        if (op.src > Reg.Zero) {
+                            if (op.src == Reg.Zero + 1) { }
+                            else if (op.src == Reg.Zero + 2) {
+                                cycles++
+                            }
+                            else {
+                                cycles += 2
+                            }
+                        } else {
+                            cycles++
+                        }
+                    }
+                    cycles += 2
+                }
                 if (op.num == 1)
                     cycles += 1
                 else
                     cycles += 3
                 break
             case OpCode.loadFConst:
-                if (op.num == 0 || op.num == 1)
+                if (op.num == 0)
+                    cycles += 2
+                else if (op.num == 1)
                     cycles += 1
                 else
-                    cycles += 4
+                    cycles += 4 // ??
                 break
             case OpCode.load:
                 cycles += 1 + op.num
@@ -127,10 +148,12 @@ function numCycles(ops: Op[]): number {
                 cycles += 1 + op.num
                 break
             case OpCode.relu:
-                cycles += 5
+                cycles += 6
                 break
             case OpCode.vmax:
                 cycles += 4
+                if (op.src != op.dst)
+                    cycles++
                 break
             case OpCode.vmul:
             case OpCode.vadd:
@@ -141,7 +164,10 @@ function numCycles(ops: Op[]): number {
                 prevDst = op.dst
                 break
             case OpCode.fcall:
-                cycles += op.num * 200 // estimate
+                if (op.fname == "softmax")
+                    cycles += 200 + op.num * 150 // estimate
+                else
+                    cycles += 500 + op.num * 500 // estimate
                 break
             default:
                 throw new Error("bad op " + op.opcode)
@@ -152,7 +178,8 @@ function numCycles(ops: Op[]): number {
 
 function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     const weightAddrDO = 0
-    const descWords = 1
+    const zeroDO = 4
+    const descWords = 2
     const usedFns: SMap<boolean> = {}
 
     let ind = ""
@@ -164,7 +191,9 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
         `_weights - _header // offset of weights`,
         `${byteOffset(modelInfo.arenaSize)} // arena size`,
         `${byteOffset(0)}  // offset of input data`,
+        `1 // input type - float32`,
         `${byteOffset(modelInfo.outputOffset)}  // offset of output data`,
+        `1 // output type - float32`,
     ]
     for (let i = 0; i < 5; ++i)
         header.push(`0 // padding`)
@@ -201,7 +230,8 @@ _header:
     write(`ldr r1, [r0, #4*3] // weight offset`)
     write(`adds r1, r0 // weight addr`)
     write(`str r1, [${reg(Reg.DataDescPtr)}, #${weightAddrDO}]`)
-
+    write(`movs r1, #0`)
+    write(`str r1, [${reg(Reg.DataDescPtr)}, #${zeroDO}]`)
     compiles(ops)
 
     write(`pop {r4-r12,pc}`)
@@ -378,7 +408,10 @@ _header:
                 }
                 break
             case OpCode.loadFConst:
-                write(`vmov ${dst}, #${op.num}f`)
+                if (op.num == 0.0)
+                    write(`vldr ${dst}, [${reg(Reg.DataDescPtr)}, #${zeroDO}]`)
+                else
+                    write(`vmov ${dst}, #${op.num}e+0`)
                 break
             case OpCode.load:
                 write(`vldm ${src}${incr}, ${range(op)}`)
