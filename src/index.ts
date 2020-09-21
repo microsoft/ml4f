@@ -168,7 +168,7 @@ async function run() {
     compileModel(sample, { verbose: true })
     compareModel(sample, "sample")
 
-    for (let i = 0; i < 50; ++i) {
+    for (let i = 0; i < 3; ++i) {
         const { model, desc } = randomModel()
         console.log(desc)
         compareModel(model, desc)

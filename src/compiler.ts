@@ -1,6 +1,7 @@
 ///<reference path="pxtpackage.d.ts" />
 
 import * as tf from '@tensorflow/tfjs'
+import { asmDeps, asmFns } from './library'
 import * as tfi from './tfi'
 import * as U from './util'
 
@@ -152,6 +153,7 @@ function numCycles(ops: Op[]): number {
 function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     const weightAddrDO = 0
     const descWords = 1
+    const usedFns: SMap<boolean> = {}
 
     let ind = ""
     const byteOffset = (n: number) => 4 * (n + descWords)
@@ -203,6 +205,14 @@ _header:
     compiles(ops)
 
     write(`pop {r4-r12,pc}`)
+
+    for (const k of Object.keys(usedFns)) {
+        for (const d of asmDeps[k] || [])
+            usedFns[d] = true
+    }
+    for (const k of Object.keys(usedFns)) {
+        write(asmFns[k])
+    }
 
     write(".balign 4")
     write("_weights:")
@@ -404,6 +414,7 @@ _header:
                 write(`mov r0, ${dst}`)
                 loadConst("r1", op.num)
                 write(`bl ${op.fname}`)
+                usedFns[op.fname] = true
                 break
             default:
                 oops("bad op " + op.opcode)
