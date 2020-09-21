@@ -92,7 +92,7 @@ function sampleModel() {
     model.add(tf.layers.dense({
         units: 4,
         kernelInitializer: 'varianceScaling',
-        activation: 'softmax'
+        activation: 'linear'
     }));
 
     const optimizer = tf.train.adam();
@@ -162,13 +162,13 @@ function isNear(a: number, b: number) {
 async function run() {
     tf.setBackend('cpu');
     const t0 = Date.now()
-    U.seedRandom(22)
+    U.seedRandom(220)
     // const m = await tf.loadLayersModel("./models/gestures.tfjsmodel.json")
     const sample = sampleModel()
-    compileModel(sample, { verbose: true })
+    // compileModel(sample, { verbose: true })
     compareModel(sample, "sample")
 
-    for (let i = 0; i < 3; ++i) {
+    for (let i = 0; i < 0; ++i) {
         const { model, desc } = randomModel()
         console.log(desc)
         compareModel(model, desc)
@@ -178,11 +178,16 @@ async function run() {
 }
 
 function compareModel(m: tf.LayersModel, desc: string) {
+    const verbose = true
     try {
-        const fn = compileModel(m)
         const randomInput = randomTensor(m.inputs[0].shape)
         const resTensor = m.predict(randomInput) as tf.Tensor
         const res = resTensor.flatten().arraySync()
+        const fn = compileModel(m, {
+            verbose,
+            testInput: randomInput.flatten().arraySync(),
+            testOutput: res
+        })
         //console.log(res)
         const res2 = fn(randomInput.flatten().arraySync())
         //console.log(res2)
@@ -200,7 +205,8 @@ function compareModel(m: tf.LayersModel, desc: string) {
             throw new Error("mismatch")
     } catch (e) {
         console.log(desc)
-        compileModel(m, { verbose: true })
+        if (!verbose)
+            compileModel(m, { verbose: true })
         throw e
     }
 }

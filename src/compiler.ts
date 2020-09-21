@@ -182,6 +182,7 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     const descWords = 2
     const usedFns: SMap<boolean> = {}
 
+    const hasTest = !!modelInfo.opts.testInput
     let ind = ""
     const byteOffset = (n: number) => 4 * (n + descWords)
     const header = [
@@ -189,6 +190,8 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
         `_start_model - _header // header size`,
         `_end - _header // total size of compiled object`,
         `_weights - _header // offset of weights`,
+        hasTest ? `_testInput - _header` : `0 // no tests`,
+        hasTest ? `_testOutput - _header` : `0 // no tests`,
         `${byteOffset(modelInfo.arenaSize)} // arena size`,
         `${byteOffset(0)}  // offset of input data`,
         `1 // input type - float32`,
@@ -245,13 +248,22 @@ _header:
     }
 
     write(".balign 4")
-    write("_weights:")
-    for (const w of modelInfo.weights)
-        write(`.float ${w}`)
+    writeArray("_weights", modelInfo.weights)
+
+    if (hasTest) {
+        writeArray("_testInput", modelInfo.opts.testInput)
+        writeArray("_testOutput", modelInfo.opts.testOutput)
+    }
 
     write("_end:")
 
     return resText
+
+    function writeArray(lbl: string, vals: number[]) {
+        write(`${lbl}:`)
+        for (const w of vals)
+            write(`.float ${w}`)
+    }
 
     function addShape(shape: number[], lbl: string) {
         for (const shp of shape)
@@ -500,9 +512,9 @@ function toJS(op: Op): string {
         case OpCode.relu:
             return `if (mem[${dst}] < 0) mem[${dst}] = 0; ${dst}++\n`
         case OpCode.vmul:
-            return `${dst} = ${src} * ${srcAlt}\n`
+            return `${dst} = f32(${src} * ${srcAlt})\n`
         case OpCode.vadd:
-            return `${dst} = ${src} + ${srcAlt}\n`
+            return `${dst} = f32(${src} + ${srcAlt})\n`
         case OpCode.vmax:
             return `${dst} = Math.max(${src}, ${srcAlt})\n`
         case OpCode.fcall:
@@ -708,6 +720,9 @@ function addActivation(res: Op[], layer: tf.layers.Layer) {
     const config = layer.getConfig() as unknown as tfi.DenseLayerArgs
     const info = getLayerInfo(layer)
     const numoutp = shapeElts(info.outputShape)
+
+    if (config.activation == "linear")
+        return // linear is identity
 
     res.push(loadDataAddr(Reg.OutputPtr, info.outputOff))
 
@@ -1094,6 +1109,8 @@ function isInPlace(layer: tf.layers.Layer) {
 
 export interface Options {
     verbose?: boolean
+    testInput?: number[]
+    testOutput?: number[]
 }
 
 export function compileModel(m: tf.LayersModel, opts: Options = {}) {
@@ -1111,7 +1128,7 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
         outputShape: null,
         outputOffset: -1,
         arenaSize: -1,
-        opts
+        opts,
     }
 
     let maxSize = [shapeElts(inputShape), 0]
@@ -1189,6 +1206,11 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
             sum += (mem[ptr + i] = Math.exp(mem[ptr + i] - max))
         for (let i = 0; i < len; ++i)
             mem[ptr + i] /= sum
+    }
+    function f32(v) {
+        const arr = new Float32Array(1)
+        arr[0] = v
+        return arr[0]
     }
     return (inputs => {
         if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).inputShape)})
