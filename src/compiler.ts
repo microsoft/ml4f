@@ -364,7 +364,7 @@ _header:
 
         switch (op.opcode) {
             case OpCode.repeat:
-                assert(op.num > 1)
+                assert(op.num >= 1)
                 alloc(op.dst, () => {
                     dst = reg(op.dst)
                     const lbl = `.l.${lblid++}`
@@ -991,7 +991,7 @@ function compileDense(layer: tf.layers.Layer) {
                 load(flashReg0, len, Reg.KernelPtr, true),
                 U.range(len + 1).map(i => [
                     i < len ? vmul(memReg0 + i, memReg0 + i, flashReg0 + i) : null,
-                    i >= 2 ? vadd(Reg.S0, Reg.S0, memReg0 + i - 1) : null
+                    i >= 1 ? vadd(Reg.S0, Reg.S0, memReg0 + i - 1) : null
                 ])
             )
 
