@@ -187,6 +187,7 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     const byteOffset = (n: number) => 4 * (n + descWords)
     const header = [
         "0x30470f62  // magic",
+        "0x46344c4d  // more magic; ML4F",
         `_start_model - _header // header size`,
         `_end - _header // total size of compiled object`,
         `_weights - _header // offset of weights`,
@@ -198,7 +199,7 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
         `${byteOffset(modelInfo.outputOffset)}  // offset of output data`,
         `1 // output type - float32`,
     ]
-    for (let i = 0; i < 5; ++i)
+    for (let i = 0; i < 4; ++i)
         header.push(`0 // padding`)
 
     addShape(modelInfo.inputShape, "input")
@@ -230,7 +231,7 @@ _header:
     write(`_start_model:`)
     write(`push {r4-r12,lr}`)
     write(`mov ${reg(Reg.DataDescPtr)}, r1`)
-    write(`ldr r1, [r0, #4*3] // weight offset`)
+    write(`ldr r1, [r0, #4*4] // weight offset`)
     write(`adds r1, r0 // weight addr`)
     write(`str r1, [${reg(Reg.DataDescPtr)}, #${weightAddrDO}]`)
     write(`movs r1, #0`)
