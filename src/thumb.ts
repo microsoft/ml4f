@@ -240,13 +240,16 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addEnc("$I2", "#0-65535", v => this.inrange(0xffff, v,
             (v & 0xff) | ((v & 0x700) << 4) | ((v & 0x800) << 15) | ((v & 0xf000) << 4)))
 
-        this.addEnc("$LB", "LABEL", v => this.inrangeSigned((1 << 20) - 1, v / 2,
-            ((v >> 1) & 0x7ff)
-            | (((v >> 12) & 0x3f) << 16)
-            | (((v >> 18) & 0x1) << 13)
-            | (((v >> 19) & 0x1) << 11)
-            | (((v >> 20) & 0x1) << 26)
-        ))
+        this.addEnc("$LB", "LABEL", v => {
+            const q = ((v >> 1) & 0x7ff)
+                | (((v >> 12) & 0x3f) << 16)
+                | (((v >> 18) & 0x1) << 13)
+                | (((v >> 19) & 0x1) << 11)
+                | (((v >> 20) & 0x1) << 26)
+            if (this.inrangeSigned((1 << 20) - 1, v / 2, q) == null)
+                return null
+            return q
+        })
 
         this.addEnc("$S0", "S0-31", v => this.inrange(31, v, ((v >> 1) << 0) | ((v & 1) << 5))) // 0-3 + 5
         this.addEnc("$S1", "S0-31", v => this.inrange(31, v, ((v >> 1) << 12) | ((v & 1) << 22))) // 12-15 + 22
