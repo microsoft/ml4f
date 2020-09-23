@@ -24,7 +24,7 @@ expf_asm:
 	vldr.32	s12, .L10+36
 	vldr.32	s13, .L10+40
 	vmul.f32	s15, s0, s15
-	vmov.f32	s14, #1.0e+0
+	vmov.f32	s14, #1.0
 	vadd.f32	s15, s15, s9
 	vsub.f32	s15, s15, s9
 	vfma.f32	s0, s15, s6
@@ -32,7 +32,7 @@ expf_asm:
 	vfma.f32	s0, s15, s7
 	vmov.f32	s15, s10
 	vfma.f32	s15, s8, s0
-	vmov	r3, s9	@ int
+	vmov	r3, s9	// int
 	vfma.f32	s11, s15, s0
 	vfma.f32	s12, s11, s0
 	vfma.f32	s13, s12, s0
@@ -40,13 +40,13 @@ expf_asm:
 	vmov.f32	s13, s14
 	vfma.f32	s13, s15, s0
 	vfma.f32	s14, s13, s0
-	vmov	r2, s14	@ int
+	vmov	r2, s14	// int
 	add	r3, r2, r3, lsl #24
-	vmov	s0, r3	@ int
+	vmov	s0, r3	// int
 	bx	lr
 .L9:
 	vldr.32	s15, .L10+44
-	vmov.f32	s14, #1.0e+0
+	vmov.f32	s14, #1.0
 	vdiv.f32	s0, s14, s15
 	bx	lr
 .L5:
@@ -93,7 +93,7 @@ softmax:
 	vldr.32	s0, [r5]
 	vsub.f32	s0, s0, s5
 	bl	expf_asm
-	adds	r4, r4, #1
+	adds	r4, #1
 	cmp	r1, r4
 	vadd.f32	s4, s4, s0
 	vstmia.32	r5!, {s0}
@@ -102,7 +102,7 @@ softmax:
 .L20:
 	vldr.32	s14, [r0]
 	vdiv.f32	s15, s14, s4
-	adds	r3, r3, #1
+	adds	r3, #1
 	cmp	r1, r3
 	vstmia.32	r0!, {s15}
 	bhi	.L20

@@ -129,6 +129,14 @@ export class Instruction {
                         v = parseInt(actual, 16)
                         labelName = "abs" + v
                     } else {
+                        let lbloff = 0
+                        if (actual.indexOf("+") > 0) {
+                            const m = /(.*)\+(\d+)$/.exec(actual)
+                            if (m) {
+                                actual = m[1]
+                                lbloff = parseInt(m[2])
+                            }
+                        }
                         labelName = actual
                         v = this.ei.getAddressFromLabel(ln.bin, this, actual, enc.isWordAligned)
                         if (v == null) {
@@ -139,6 +147,7 @@ export class Instruction {
                                 // doing some pass other than finalEmit
                                 v = 8; // needs to be divisible by 4 etc
                         }
+                        v += lbloff
                     }
                     if (isSpecial32) {
                         // console.log(actual + " " + v.toString())

@@ -223,9 +223,9 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addInst("bal   $lb11", 0xe000, 0xf800);
 
         // handled specially - 32 bit instruction
-        this.addInst("bl    $lb", 0xf000, 0xf800, true);
+        this.addInst("bl    $lb", 0xf000, 0xf800);
         // this is normally emitted as 'b' but will be emitted as 'bl' if needed
-        this.addInst("bb    $lb", 0xe000, 0xf800, true);
+        this.addInst("bb    $lb", 0xe000, 0xf800);
 
         // this will emit as PC-relative LDR or ADDS
         this.addInst("ldlit   $r5, $i32", 0x4800, 0xf800);
@@ -235,10 +235,12 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addEnc("$R0", "R0-15", v => this.inrange(15, v, v << 8)) // 8-11
         this.addEnc("$R1", "R0-15", v => this.inrange(15, v, v << 16)) // 16-19
         this.addEnc("$R2", "R0-15", v => this.inrange(15, v, v << 12)) // 12-15
+        this.addEnc("$R3", "R0-15", v => this.inrange(15, v, v << 0)) // 0-3
         this.addEnc("$I0", "#0-4095", v => this.inrange(4095, v, (v & 0xff) | ((v & 0x700) << 4) | ((v & 0x800) << 15)))
         this.addEnc("$I1", "#0-4095", v => this.inrange(4095, v, v))
         this.addEnc("$I2", "#0-65535", v => this.inrange(0xffff, v,
             (v & 0xff) | ((v & 0x700) << 4) | ((v & 0x800) << 15) | ((v & 0xf000) << 4)))
+        this.addEnc("$I3", "#0-31", v => this.inrange(31, v, ((v & 3) << 6) | ((v >> 2) << 12)))
 
         this.addEnc("$LB", "LABEL", v => {
             const q = ((v >> 1) & 0x7ff)
@@ -283,6 +285,7 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addInst32("ldr   $R2, [$R1, $I1]", 0xf8d00000, 0xfff00000);
         this.addInst32("str   $R2, [$R1, $I1]", 0xf8c00000, 0xfff00000);
         this.addInst32("movw  $R0, $I2", 0xf2400000, 0xfbf08000);
+        this.addInst32("add   $R0, $R1, $R3, lsl $I3", 0xeb000000, 0xfff08000);
 
         allConds((cond, id) =>
             this.addInst32(`b${cond} $LB`, 0xf0008000 | (id << 22), 0xfbc0d000), true)
@@ -319,9 +322,16 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addInst32("vldm         $R1, $SL0", 0xec900a00, 0xffb00f00);
         this.addInst32("vldr         $S1, [$R1, $i1]", 0xed900a00, 0xffb00f00);
         this.addInst32("vstr         $S1, [$R1, $i1]", 0xed800a00, 0xffb00f00);
+        this.addInst32("vldr         $S1, [$R1]", 0xed900a00, 0xffb00f00);
         this.addInst32("vmrs         APSR_nzcv, fpscr", 0xeef1fa10, 0xffffffff);
         this.addInst32("vmrs         APSR_nzcv, FPSCR", 0xeef1fa10, 0xffffffff);
         this.addInst32("vmov.f32     $S1, $S0", 0xeeb00a40, 0xffbf0fd0);
+        this.addInst32("vmov         $S2, $R2", 0xee000a10, 0xfff00f7f);
+        this.addInst32("vmov         $R2, $S2", 0xee100a10, 0xfff00f7f);
+        this.addInst32("vldr         $S1, $la", 0xed9f0a00, 0xffbf0f00);
+        this.addInst32("vmov.f32     $S1, #1.0", 0xeeb50ac0, 0xffbf0ff0);
+        this.addInst32("vcvt.s32.f32   $S1, $S0", 0xeeb40ac0, 0xffbf0fd0);
+
 
         /*
         vmsr
@@ -337,12 +347,18 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         if (name.length >= 5) {
             const dot = name.indexOf(".")
             let suff = ""
+            let force = false
             if (dot > 0) {
                 suff = name.slice(dot)
                 name = name.slice(0, dot)
+                if (suff == ".32") {
+                    force = true
+                    suff = ""
+                }
             }
             if (armConditions[name.slice(-2)])
                 return name.slice(0, -2) + suff
+            if (force) return name
         }
         return null
     }

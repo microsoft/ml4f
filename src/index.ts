@@ -92,7 +92,7 @@ function sampleModel() {
     model.add(tf.layers.dense({
         units: 4,
         kernelInitializer: 'varianceScaling',
-        activation: 'linear'
+        activation: 'softmax'
     }));
 
     const optimizer = tf.train.adam();
