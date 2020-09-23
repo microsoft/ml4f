@@ -329,8 +329,8 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addInst32("vmov         $S2, $R2", 0xee000a10, 0xfff00f7f);
         this.addInst32("vmov         $R2, $S2", 0xee100a10, 0xfff00f7f);
         this.addInst32("vldr         $S1, $la", 0xed9f0a00, 0xffbf0f00);
-        this.addInst32("vmov.f32     $S1, #1.0", 0xeeb50ac0, 0xffbf0ff0);
-        this.addInst32("vcvt.s32.f32   $S1, $S0", 0xeeb40ac0, 0xffbf0fd0);
+        this.addInst32("vmov.f32     $S1, #1.0", 0xeeb70a00, 0xffbf0ff0);
+        this.addInst32("vcvt.s32.f32 $S1, $S0", 0xeebd0ac0, 0xffbf0fd0);
 
 
         /*
