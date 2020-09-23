@@ -1,3 +1,4 @@
+import { ThumbProcessor } from "./thumb";
 import { assert, oops, endsWith, userError, mapMap } from "./util";
 
 export let debug = false
@@ -41,13 +42,13 @@ export class Instruction {
     public args: string[];
     public friendlyFmt: string;
     public code: string;
-    protected ei: AbstractProcessor;
+    protected ei: ThumbProcessor;
     public canBeShared = false;
 
     constructor(ei: AbstractProcessor, format: string, public opcode: number, public mask: number, public is32bit: boolean) {
         assert((opcode & mask) == opcode)
 
-        this.ei = ei;
+        this.ei = ei as any;
         this.code = format.replace(/\s+/g, " ");
 
         this.friendlyFmt = format.replace(/\$\w+/g, m => {
@@ -62,7 +63,7 @@ export class Instruction {
     }
 
     emit(ln: Line): EmitResult {
-        let tokens = ln.words;
+        const tokens = ln.words;
         if (tokens[0] != this.name) return badNameError;
         let r = this.opcode;
         let j = 1;
@@ -72,6 +73,8 @@ export class Instruction {
         let bit32_value: number = null
         let bit32_actual: string = null
 
+        const isSpecial32 = this.ei.is32bit(this) && !this.is32bit
+
         for (let i = 0; i < this.args.length; ++i) {
             let formal = this.args[i]
             let actual = tokens[j++]
@@ -79,7 +82,7 @@ export class Instruction {
                 let enc = this.ei.encoders[formal]
                 let v: number = null
                 if (enc.isRegister) {
-                    v = this.ei.registerNo(actual);
+                    v = this.ei.registerNo(actual, enc);
                     if (v == null) return emitErr("expecting register name", actual)
                     if (this.ei.isPush(this.opcode)) // push
                         stack++;
@@ -106,7 +109,7 @@ export class Instruction {
                         actual = tokens[j++];
                         if (!actual)
                             return emitErr("expecting }", tokens[j - 2])
-                        let no = this.ei.registerNo(actual);
+                        let no = this.ei.registerNo(actual, enc);
                         if (no == null) return emitErr("expecting register name", actual)
                         if (v & (1 << no)) return emitErr("duplicate register name", actual)
                         v |= (1 << no);
@@ -137,7 +140,7 @@ export class Instruction {
                                 v = 8; // needs to be divisible by 4 etc
                         }
                     }
-                    if (this.ei.is32bit(this)) {
+                    if (isSpecial32) {
                         // console.log(actual + " " + v.toString())
                         bit32_value = v
                         bit32_actual = actual
@@ -165,14 +168,22 @@ export class Instruction {
 
         if (tokens[j]) return emitErr("trailing tokens", tokens[j])
 
-        if (this.ei.is32bit(this)) {
+        if (isSpecial32)
             return this.ei.emit32(r, bit32_value, ln.bin.normalizeExternalLabel(bit32_actual));
-        }
+
+        if (this.is32bit)
+            return {
+                opcode: ((r >> 16) & 0xffff) | 0x8000,
+                opcode2: (r >> 0) & 0xffff,
+                stack,
+                numArgs,
+                labelName: ln.bin.normalizeExternalLabel(labelName)
+            }
 
         return {
-            stack: stack,
+            stack,
             opcode: r,
-            numArgs: numArgs,
+            numArgs,
             labelName: ln.bin.normalizeExternalLabel(labelName)
         }
     }
@@ -231,7 +242,7 @@ export class File {
     constructor(ei: AbstractProcessor) {
         this.currLine = new Line(this, "<start>");
         this.currLine.lineNo = 0;
-        this.ei = ei;
+        this.ei = ei as any;
         this.ei.file = this;
     }
 
@@ -242,7 +253,7 @@ export class File {
     public inlineMode = false;
     public lookupExternalLabel: (name: string) => number;
     public normalizeExternalLabel = (n: string) => n;
-    public ei: AbstractProcessor;
+    public ei: ThumbProcessor;
     public lines: Line[];
     private currLineNo: number = 0;
     private realCurrLineNo: number;
@@ -577,6 +588,20 @@ export class File {
         })
     }
 
+    private emitFloats(words: string[]) {
+        words.slice(1).forEach(w => {
+            if (w == ",") return
+            const v = parseFloat(w)
+            if (isNaN(v))
+                this.directiveError("invalid .float")
+            const buf = new Float32Array(1)
+            buf[0] = v
+            const n = new Uint32Array(buf.buffer)[0]
+            this.emitShort(n & 0xffff)
+            this.emitShort((n >> 16) & 0xffff)
+        })
+    }
+
     private handleDirective(l: Line) {
         let words = l.words;
 
@@ -633,6 +658,9 @@ export class File {
                 break;
             case ".hex":
                 this.emitHex(words);
+                break;
+            case ".float":
+                this.emitFloats(words);
                 break;
             case ".hword":
             case ".short":
@@ -753,6 +781,8 @@ export class File {
                 break
             }
 
+            case ".arch":
+            case ".thumb":
             case ".file":
             case ".text":
             case ".cpu":
@@ -812,17 +842,28 @@ export class File {
                 return;
         }
 
-        let getIns = (n: string) => this.ei.instructions.hasOwnProperty(n) ? this.ei.instructions[n] : [];
+        const getIns = (n: string) => this.ei.instructions.hasOwnProperty(n) ? this.ei.instructions[n] : [];
 
-        if (!ln.instruction) {
-            let ins = getIns(ln.words[0])
-            for (let i = 0; i < ins.length; ++i) {
-                if (this.handleOneInstruction(ln, ins[i]))
-                    return;
+        let ins = getIns(ln.words[0])
+        for (let i = 0; i < ins.length; ++i) {
+            if (this.handleOneInstruction(ln, ins[i]))
+                return;
+        }
+
+        const condless = this.ei.stripCondition(ln.words[0])
+        if (condless) {
+            ins = getIns(condless)
+            if (ins.length > 0) {
+                ln.words[0] = condless
+                for (let i = 0; i < ins.length; ++i) {
+                    if (this.handleOneInstruction(ln, ins[i]))
+                        return;
+                }
             }
         }
 
         let w0 = ln.words[0].toLowerCase().replace(/s$/, "").replace(/[^a-z]/g, "")
+        w0 = this.ei.stripCondition(w0) || w0
 
         let hints = ""
         let possibilities = getIns(w0).concat(getIns(w0 + "s"))
@@ -1165,7 +1206,7 @@ export abstract class AbstractProcessor {
         return;
     }
 
-    public registerNo(actual: string): number {
+    public registerNo(actual: string, enc: Encoder): number {
         return null;
     }
 
@@ -1196,41 +1237,42 @@ export abstract class AbstractProcessor {
     public expandLdlit(f: File): void {
     }
 
-    protected addEnc = (n: string, p: string, e: (v: number) => number) => {
+
+    protected addEnc(n: string, p: string, e: (v: number) => number) {
         let ee: Encoder = {
             name: n,
             pretty: p,
             encode: e,
-            isRegister: /^\$r\d/.test(n),
-            isImmediate: /^\$i\d/.test(n),
-            isRegList: /^\$rl\d/.test(n),
-            isLabel: /^\$l[a-z]/.test(n),
+            isRegister: /^\$[sr]\d/i.test(n),
+            isImmediate: /^\$i\d/i.test(n),
+            isRegList: /^\$[sr]l\d/i.test(n),
+            isLabel: /^\$l[a-z]/i.test(n),
         }
         this.encoders[n] = ee
         return ee
     }
 
-    protected inrange = (max: number, v: number, e: number) => {
+    protected inrange(max: number, v: number, e: number) {
         if (Math.floor(v) != v) return null;
         if (v < 0) return null;
         if (v > max) return null;
         return e;
     }
 
-    protected inminmax = (min: number, max: number, v: number, e: number) => {
+    protected inminmax(min: number, max: number, v: number, e: number) {
         if (Math.floor(v) != v) return null;
         if (v < min) return null;
         if (v > max) return null;
         return e;
     }
 
-    protected inseq = (seq: number[], v: number) => {
+    protected inseq(seq: number[], v: number) {
         let ind = seq.indexOf(v);
         if (ind < 0) return null
         return ind;
     }
 
-    protected inrangeSigned = (max: number, v: number, e: number) => {
+    protected inrangeSigned(max: number, v: number, e: number) {
         if (Math.floor(v) != v) return null;
         if (v < -(max + 1)) return null;
         if (v > max) return null;
@@ -1238,13 +1280,23 @@ export abstract class AbstractProcessor {
         return e & mask;
     }
 
-
-    protected addInst = (name: string, code: number, mask: number, is32Bit?: boolean) => {
+    protected addInst(name: string, code: number, mask: number, is32Bit?: boolean) {
         let ins = new Instruction(this, name, code, mask, is32Bit)
         if (!this.instructions.hasOwnProperty(ins.name))
             this.instructions[ins.name] = [];
         this.instructions[ins.name].push(ins)
         return ins
+    }
+
+    protected addInst32(name: string, code: number, mask: number) {
+        // the high bit should be always set
+        const high = 0x80000000
+        assert(!!(code & high))
+        assert(!!(mask & high))
+        // we clear it to avoid problems with numbers becoming negative
+        code &= ~high
+        mask &= ~high
+        return this.addInst(name, code, mask, true)
     }
 }
 
@@ -1269,6 +1321,10 @@ function tokenize(line: string): string[] {
             case "\n":
                 if (w) { words.push(w); w = "" }
                 break;
+            case "/":
+                if (line[i + 1] == "/")
+                    break loop;
+                break
             case ";":
                 // drop the trailing comment
                 break loop;

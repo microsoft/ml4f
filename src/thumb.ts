@@ -29,7 +29,7 @@ const thumbRegs: pxt.Map<number> = {
     "r8": 8,
     "r9": 9,
     "r10": 10,
-    "r11": 10,
+    "r11": 11,
     "r12": 12,
     "sp": 13,
     "r13": 13,
@@ -39,11 +39,46 @@ const thumbRegs: pxt.Map<number> = {
     "r15": 15,
 }
 
+const armConditions: SMap<number> = {
+    "eq": 0,
+    "ne": 1,
+    "cs": 2,
+    "hs": 2, // cs
+    "cc": 3,
+    "lo": 3, // cc
+    "mi": 4,
+    "pl": 5,
+    "vs": 6,
+    "vc": 7,
+    "hi": 8,
+    "ls": 9,
+    "ge": 10,
+    "lt": 11,
+    "gt": 12,
+    "le": 13,
+    "": 14,
+    "al": 14,
+}
+
+let fpRegs: pxt.Map<number>
+
 export class ThumbProcessor extends assembler.AbstractProcessor {
     runtimeIsARM = false
 
     constructor() {
         super();
+
+        if (!fpRegs) {
+            fpRegs = {}
+            for (let i = 0; i < 32; ++i)
+                fpRegs["s" + i] = i
+        }
+
+        const allConds = (f: (cond: string, id: number) => void, inclAl = false) => {
+            for (const k of Object.keys(armConditions))
+                if (armConditions[k] != 14 || inclAl)
+                    f(k, armConditions[k])
+        }
 
         // Registers
         // $r0 - bits 2:1:0
@@ -181,22 +216,8 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addInst("cpsid i", 0xb672, 0xffff);
         this.addInst("cpsie i", 0xb662, 0xffff);
 
-        this.addInst("beq   $lb", 0xd000, 0xff00);
-        this.addInst("bne   $lb", 0xd100, 0xff00);
-        this.addInst("bcs   $lb", 0xd200, 0xff00);
-        this.addInst("bcc   $lb", 0xd300, 0xff00);
-        this.addInst("bmi   $lb", 0xd400, 0xff00);
-        this.addInst("bpl   $lb", 0xd500, 0xff00);
-        this.addInst("bvs   $lb", 0xd600, 0xff00);
-        this.addInst("bvc   $lb", 0xd700, 0xff00);
-        this.addInst("bhi   $lb", 0xd800, 0xff00);
-        this.addInst("bls   $lb", 0xd900, 0xff00);
-        this.addInst("bge   $lb", 0xda00, 0xff00);
-        this.addInst("blt   $lb", 0xdb00, 0xff00);
-        this.addInst("bgt   $lb", 0xdc00, 0xff00);
-        this.addInst("ble   $lb", 0xdd00, 0xff00);
-        this.addInst("bhs   $lb", 0xd200, 0xff00); // cs
-        this.addInst("blo   $lb", 0xd300, 0xff00); // cc
+        allConds((cond, id) =>
+            this.addInst(`b${cond} $lb`, 0xd000 | (id << 8), 0xff00))
 
         this.addInst("b     $lb11", 0xe000, 0xf800);
         this.addInst("bal   $lb11", 0xe000, 0xf800);
@@ -208,6 +229,119 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
 
         // this will emit as PC-relative LDR or ADDS
         this.addInst("ldlit   $r5, $i32", 0x4800, 0xf800);
+
+        // 32 bit encodings
+        this.addEnc("$RL0", "{R0-15,...}", v => this.inrange(0xffff, v, v))
+        this.addEnc("$R0", "R0-15", v => this.inrange(15, v, v << 8)) // 8-11
+        this.addEnc("$R1", "R0-15", v => this.inrange(15, v, v << 16)) // 16-19
+        this.addEnc("$R2", "R0-15", v => this.inrange(15, v, v << 12)) // 12-15
+        this.addEnc("$I0", "#0-4095", v => this.inrange(4095, v, (v & 0xff) | ((v & 0x700) << 4) | ((v & 0x800) << 15)))
+        this.addEnc("$I1", "#0-4095", v => this.inrange(4095, v, v))
+        this.addEnc("$I2", "#0-65535", v => this.inrange(0xffff, v,
+            (v & 0xff) | ((v & 0x700) << 4) | ((v & 0x800) << 15) | ((v & 0xf000) << 4)))
+
+        this.addEnc("$LB", "LABEL", v => this.inrangeSigned((1 << 20) - 1, v / 2,
+            ((v >> 1) & 0x7ff)
+            | (((v >> 12) & 0x3f) << 16)
+            | (((v >> 18) & 0x1) << 13)
+            | (((v >> 19) & 0x1) << 11)
+            | (((v >> 20) & 0x1) << 26)
+        ))
+
+        this.addEnc("$S0", "S0-31", v => this.inrange(31, v, ((v >> 1) << 0) | ((v & 1) << 5))) // 0-3 + 5
+        this.addEnc("$S1", "S0-31", v => this.inrange(31, v, ((v >> 1) << 12) | ((v & 1) << 22))) // 12-15 + 22
+        this.addEnc("$S2", "S0-31", v => this.inrange(31, v, ((v >> 1) << 16) | ((v & 1) << 7))) // 16-19 + 7
+
+        this.addEnc("$SL0", "{S0-S31}",
+            v => {
+                v |= 0
+                const v0 = v
+                if (!v) return null
+                let reg0 = 0
+                while (reg0 < 32 && 0 == (v & (1 << reg0)))
+                    reg0++
+                v >>>= reg0
+                if (!v) return null
+                let num = 0
+                while (v & 1) {
+                    v >>= 1
+                    num++
+                }
+                if (v) return null // non-consecutive
+                v = reg0
+                // console.log(v0.toString(16), v, num)
+                return ((v >> 1) << 12) | ((v & 1) << 22) | num
+            })
+
+        this.addInst32("push  $RL0", 0xe92d0000, 0xffff0000)
+        this.addInst32("pop   $RL0", 0xe8bd0000, 0xffff0000)
+        this.addInst32("addw  $R0, $R1, $I0", 0xf2000000, 0xfbf08000)
+        this.addInst32("subw  $R0, $R1, $I0", 0xf2a00000, 0xfbf08000)
+        this.addInst32("ldr   $R2, [$R1, $I1]", 0xf8d00000, 0xfff00000);
+        this.addInst32("str   $R2, [$R1, $I1]", 0xf8c00000, 0xfff00000);
+        this.addInst32("movw  $R0, $I2", 0xf2400000, 0xfbf08000);
+
+        allConds((cond, id) =>
+            this.addInst32(`b${cond} $LB`, 0xf0008000 | (id << 22), 0xfbc0d000), true)
+
+        allConds((cond, id) =>
+            this.addInst(`it ${cond}`, 0xbf08 | (id << 4), 0xffff), true)
+
+        this.addInst32("vabs.f32     $S1, $S0", 0xeeb00ac0, 0xffbf0fd0);
+        this.addInst32("vadd.f32     $S1, $S2, $S0", 0xee300a00, 0xffb00f50);
+        this.addInst32("vmul.f32     $S1, $S2, $S0", 0xee200a00, 0xffb00f50);
+        this.addInst32("vcmpe.f32    $S1, #0.0", 0xeeb50ac0, 0xffbf0ff0);
+        this.addInst32("vcmpe.f32    $S1, $S0", 0xeeb40ac0, 0xffbf0fd0);
+        this.addInst32("vcmp.f32     $S1, #0.0", 0xeeb50a40, 0xffbf0ff0);
+        this.addInst32("vcmp.f32     $S1, $S0", 0xeeb40a40, 0xffbf0fd0);
+        this.addInst32("vdiv.f32     $S1, $S2, $S0", 0xee800a00, 0xffb00f50);
+        this.addInst32("vfma.f32     $S1, $S2, $S0", 0xeea00a00, 0xffb00f50);
+        this.addInst32("vfms.f32     $S1, $S2, $S0", 0xeea00a40, 0xffb00f50);
+        this.addInst32("vfnma.f32    $S1, $S2, $S0", 0xee900a40, 0xffb00f50);
+        this.addInst32("vfnms.f32    $S1, $S2, $S0", 0xee900a00, 0xffb00f50);
+        this.addInst32("vmla.f32     $S1, $S2, $S0", 0xe2000d10, 0xffb00f10);
+        this.addInst32("vmls.f32     $S1, $S2, $S0", 0xe2200d10, 0xffb00f10);
+        this.addInst32("vneg.f32     $S1, $S0", 0xeeb10a40, 0xffbf0fd0);
+        this.addInst32("vsqrt.f32    $S1, $S0", 0xeeb10ac0, 0xffbf0fd0);
+        this.addInst32("vsub.f32     $S1, $S2, $S0", 0xee300a40, 0xffb00f50);
+        this.addInst32("vstmdb       $R1!, $SL0", 0xed200a00, 0xffb00f00);
+        this.addInst32("vstmia       $R1!, $SL0", 0xeca00a00, 0xffb00f00);
+        this.addInst32("vstmia       $R1, $SL0", 0xec800a00, 0xffb00f00);
+        this.addInst32("vstm         $R1!, $SL0", 0xeca00a00, 0xffb00f00);
+        this.addInst32("vstm         $R1, $SL0", 0xec800a00, 0xffb00f00);
+        this.addInst32("vldmdb       $R1!, $SL0", 0xed300a00, 0xffb00f00);
+        this.addInst32("vldmia       $R1!, $SL0", 0xecb00a00, 0xffb00f00);
+        this.addInst32("vldmia       $R1, $SL0", 0xec900a00, 0xffb00f00);
+        this.addInst32("vldm         $R1!, $SL0", 0xecb00a00, 0xffb00f00);
+        this.addInst32("vldm         $R1, $SL0", 0xec900a00, 0xffb00f00);
+        this.addInst32("vldr         $S1, [$R1, $i1]", 0xed900a00, 0xffb00f00);
+        this.addInst32("vstr         $S1, [$R1, $i1]", 0xed800a00, 0xffb00f00);
+        this.addInst32("vmrs         APSR_nzcv, fpscr", 0xeef1fa10, 0xffffffff);
+        this.addInst32("vmrs         APSR_nzcv, FPSCR", 0xeef1fa10, 0xffffffff);
+        this.addInst32("vmov.f32     $S1, $S0", 0xeeb00a40, 0xffbf0fd0);
+
+        /*
+        vmsr
+        vpush
+        vpop
+        vrint
+        vsel
+        */
+
+    }
+
+    public stripCondition(name: string): string {
+        if (name.length >= 5) {
+            const dot = name.indexOf(".")
+            let suff = ""
+            if (dot > 0) {
+                suff = name.slice(dot)
+                name = name.slice(0, dot)
+            }
+            if (armConditions[name.slice(-2)])
+                return name.slice(0, -2) + suff
+        }
+        return null
     }
 
     public toFnPtr(v: number, baseOff: number, lbl: string) {
@@ -221,7 +355,7 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
     }
 
     public is32bit(i: assembler.Instruction) {
-        return i.name == "bl" || i.name == "bb";
+        return i.name == "bl" || i.name == "bb" || i.is32bit;
     }
 
     public postProcessAbsAddress(f: assembler.File, v: number) {
@@ -433,10 +567,14 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         }
     }
 
-    public registerNo(actual: string) {
+    public registerNo(actual: string, enc: assembler.Encoder) {
         if (!actual) return null;
         actual = actual.toLowerCase()
-        const r = thumbRegs[actual]
+        let map = thumbRegs
+        if (enc.name[1] == "S") {
+            map = fpRegs
+        }
+        const r = map[actual]
         if (r === undefined)
             return null
         return r
@@ -444,15 +582,15 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
 
     public testAssembler() {
         assembler.expectError(this, "lsl r0, r0, #8");
-        assembler.expectError(this, "push {pc,lr}");
+        //assembler.expectError(this, "push {pc,lr}");
         assembler.expectError(this, "push {r17}");
         assembler.expectError(this, "mov r0, r1 foo");
         assembler.expectError(this, "movs r14, #100");
         assembler.expectError(this, "push {r0");
         assembler.expectError(this, "push lr,r0}");
-        assembler.expectError(this, "pop {lr,r0}");
+        //assembler.expectError(this, "pop {lr,r0}");
         assembler.expectError(this, "b #+11");
-        assembler.expectError(this, "b #+102400");
+        assembler.expectError(this, "b #+10240000");
         assembler.expectError(this, "bne undefined_label");
         assembler.expectError(this, ".foobar");
 

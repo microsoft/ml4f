@@ -5,5 +5,8 @@ tmp
 *.o
 c/*.s
 c/*.elf
-c/foo.bin
 c/foo.ts
+c/*.diff
+c/*.dump
+c/*.hex
+c/*.bin

@@ -183,13 +183,13 @@ function compareModel(m: tf.LayersModel, desc: string) {
         const randomInput = randomTensor(m.inputs[0].shape)
         const resTensor = m.predict(randomInput) as tf.Tensor
         const res = resTensor.flatten().arraySync()
-        const fn = compileModel(m, {
+        const cres = compileModel(m, {
             verbose,
             testInput: randomInput.flatten().arraySync(),
             testOutput: res
         })
         //console.log(res)
-        const res2 = fn(randomInput.flatten().arraySync())
+        const res2 = cres.execute(randomInput.flatten().arraySync())
         //console.log(res2)
 
         let numerr = 0
@@ -203,6 +203,16 @@ function compareModel(m: tf.LayersModel, desc: string) {
 
         if (numerr)
             throw new Error("mismatch")
+
+        const asmr = assemble(cres.thumb)
+        function hex2(n: number) {
+            return ("0" + n.toString(16)).slice(-2)
+        }
+        cres.thumb += "// BUF: " + asmr.buf.map(k => hex2(k & 0xff) + hex2(k >> 8)).join("") + "\n"
+
+        if (verbose)
+            console.log(cres.thumb)
+
     } catch (e) {
         console.log(desc)
         if (!verbose)

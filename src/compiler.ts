@@ -188,11 +188,11 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     const header = [
         "0x30470f62  // magic",
         "0x46344c4d  // more magic; ML4F",
-        `_start_model - _header // header size`,
-        `_end - _header // total size of compiled object`,
-        `_weights - _header // offset of weights`,
-        hasTest ? `_testInput - _header` : `0 // no tests`,
-        hasTest ? `_testOutput - _header` : `0 // no tests`,
+        `_start_model-_header // header size`,
+        `_end-_header // total size of compiled object`,
+        `_weights-_header // offset of weights`,
+        hasTest ? `_testInput-_header` : `0 // no tests`,
+        hasTest ? `_testOutput-_header` : `0 // no tests`,
         `${byteOffset(modelInfo.arenaSize)} // arena size`,
         `${byteOffset(0)}  // offset of input data`,
         `1 // input type - float32`,
@@ -229,7 +229,7 @@ _header:
     regAlloc[Reg.DataDescPtr] = 7
 
     write(`_start_model:`)
-    write(`push {r4-r12,lr}`)
+    write(`push {r4,r5,r6,r7,r8,r9,r10,r11,r12,lr}`)
     write(`mov ${reg(Reg.DataDescPtr)}, r1`)
     write(`ldr r1, [r0, #4*4] // weight offset`)
     write(`adds r1, r0 // weight addr`)
@@ -238,7 +238,7 @@ _header:
     write(`str r1, [${reg(Reg.DataDescPtr)}, #${zeroDO}]`)
     compiles(ops)
 
-    write(`pop {r4-r12,pc}`)
+    write(`pop {r4,r5,r6,r7,r8,r9,r10,r11,r12,pc}`)
 
     for (const k of Object.keys(usedFns)) {
         for (const d of asmDeps[k] || [])
@@ -334,12 +334,18 @@ _header:
 
     function loadConst(dst: string, num: number) {
         // TODO?
-        write(`mov ${dst}, #${num}`)
+        if (num <= 0xff)
+            write(`movs ${dst}, #${num}`)
+        else
+            write(`movw ${dst}, #${num}`)
     }
 
     function addConst(dst: string, src: string, num: number) {
-        if (num < (1 << 12)) {
-            write(`addw ${dst}, ${src}, #${num}`)
+        if (Math.abs(num) < (1 << 12)) {
+            if (num < 0)
+                write(`subw ${dst}, ${src}, #${-num}`)
+            else
+                write(`addw ${dst}, ${src}, #${num}`)
         } else {
             loadConst("r1", num)
             write(`adds ${dst}, ${src},r1`)
@@ -351,10 +357,7 @@ _header:
     }
 
     function range(op: Op) {
-        if (op.num == 1)
-            return `{${reg(op.dst)}}`
-        else
-            return `{${reg(op.dst)}-${reg(op.dst + op.num - 1)}}`
+        return "{" + U.range(op.num).map(k => reg(op.dst + k)).join(",") + "}"
     }
 
     function compile(op: Op) {
@@ -433,12 +436,13 @@ _header:
                 write(`vstm ${src}${incr}, ${range(op)}`)
                 break
             case OpCode.relu:
-                write(`ldr r0, [${dst}]`)
+                write(`ldr r0, [${dst}, #0]`)
                 // negative check on FP and int is the same
                 write(`cmp r0, #0`)
                 write(`it lt`)
                 // int 0 is same as 0.0f
-                write(`movslt r0, #0`)
+                // this could be movslt but GAS always assembles this as movw, so for bit-exactness we stick to movw
+                write(`movwlt r0, #0`)
                 write(`stm ${dst}!, {r0}`)
                 break
             case OpCode.vmul:
@@ -454,7 +458,7 @@ _header:
                 write(`vcmp.f32 ${dst}, ${srcAlt}`)
                 write(`vmrs APSR_nzcv, FPSCR`)
                 write(`it mi`)
-                write(`vmovmi ${dst}, ${srcAlt}`)
+                write(`vmovmi.f32 ${dst}, ${srcAlt}`)
                 break
             case OpCode.fcall:
                 write(`mov r0, ${dst}`)
@@ -1114,6 +1118,11 @@ export interface Options {
     testOutput?: number[]
 }
 
+export interface CompileResult {
+    execute: (inp: ArrayLike<number>) => Float32Array
+    thumb: string
+}
+
 export function compileModel(m: tf.LayersModel, opts: Options = {}) {
     repIdx = 0
 
@@ -1231,10 +1240,12 @@ ${toJSs(flat)}
     if (opts.verbose) {
         console.log(fn)
         console.log("cycles:", numCycles(flat))
-
-        console.log(toThumb(modelInfo, flat))
     }
 
-    const modelFn: (inp: ArrayLike<number>) => Float32Array = (eval(fn))(modelInfo.weights)
-    return modelFn
+    const res: CompileResult = {
+        execute: (eval(fn))(modelInfo.weights),
+        thumb: toThumb(modelInfo, flat)
+    }
+
+    return res
 }
