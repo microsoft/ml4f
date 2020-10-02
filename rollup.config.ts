@@ -1,11 +1,9 @@
 import commonjs from 'rollup-plugin-commonjs';
-import node from 'rollup-plugin-node-resolve';
 import typescript from 'rollup-plugin-typescript2';
 import json from 'rollup-plugin-json'
 
 export default [
-  { src: 'src/browser.ts', dst: 'built/ml4f-browser.js' },
-  { src: 'src/node.ts', dst: 'built/ml4f.js' }
+  { src: 'src/main.ts', dst: 'built/ml4f.js' }
 ].map(({ src, dst }) => ({
   external: ['@tensorflow/tfjs'],
 
@@ -20,16 +18,15 @@ export default [
         }
       }
     }),
-    node(),
     commonjs({
-      include: 'node_modules/**'
+      include: 'node_modules/**',
     })
   ],
   output: {
     extend: true,
     file: dst,
     format: 'umd',
-    name: 'gestrec',
+    name: 'ml4f',
     globals: {
       '@tensorflow/tfjs': 'tf'
     },

@@ -3,17 +3,19 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
+    "build": "node node_modules/typescript/bin/tsc",
     "watch": "node node_modules/rollup/dist/bin/rollup -c rollup.config.ts -w"
   },
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@tensorflow/tfjs": "^2.3.0",
+    "@tensorflow/tfjs-node": "^2.3.0",
     "@tensorflow/tfjs-vis": "^1.4.3",
+    "commander": "^6.1.0",
     "rollup": "^2.26.4",
     "rollup-plugin-commonjs": "^10.1.0",
     "rollup-plugin-json": "^4.0.0",
-    "rollup-plugin-node-resolve": "^5.2.0",
     "rollup-plugin-sourcemaps": "^0.6.2",
     "rollup-plugin-typescript2": "^0.27.2",
     "typescript": "^3.9.7"

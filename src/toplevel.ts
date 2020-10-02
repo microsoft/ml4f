@@ -159,7 +159,7 @@ function isNear(a: number, b: number) {
     return false
 }
 
-export async function run() {
+export async function runBrowser() {
     tf.setBackend('cpu');
     const t0 = Date.now()
     U.seedRandom(220)
