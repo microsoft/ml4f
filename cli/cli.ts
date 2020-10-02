@@ -43,41 +43,71 @@ function loadJSONModel(modelPath: string) {
     return model;
 }
 
-async function loadModel(modelPath: string) {
-    let modelBuf = fs.readFileSync(modelPath)
+function runCmd(cmd: string, args: string[]) {
+    const info = `${cmd} ${args.join(" ")}`
+    console.log(`RUN ${info}`)
+    const res = child_process.spawnSync(cmd, args, {
+        stdio: "inherit"
+    })
+    if (res.status != 0)
+        throw new Error(`non-zero status from ${info}`)
+    console.log("RUN OK")
+}
 
-    if (modelBuf[0] == 0x08)
-        throw new Error(".savedmodel files not supported; use model.save('mymodel.h5') to save in H5 format")
+function fromPB(modelPath: string) {
+    const tmpPath = "ml4f-tmppb-" + U.randomUint32() + ".h5"
+    try {
+        runCmd("python3", [
+            "-c", `import tensorflow; m = tensorflow.keras.models.load_model('${path.dirname(modelPath)}'); m.save('${tmpPath}')`
+        ])
+        return loadModel(tmpPath)
+    } finally {
+        if (!options.keepTmp) {
+            if (fs.existsSync(tmpPath))
+                fs.unlinkSync(tmpPath)
+        }
+    }
+}
 
-    if (modelBuf[0] == 0x89) {
-        const tmpPath = "ml4f-tmp-" + U.randomUint32()
-        const cmd = "tensorflowjs_converter"
-        const args = [
+function fromH5(modelPath: string) {
+    const tmpPath = "ml4f-tmp-" + U.randomUint32()
+    try {
+        runCmd("tensorflowjs_converter", [
             "--input_format", "keras",
             "--output_format", "tfjs_layers_model",
             modelPath, tmpPath
-        ]
-        const info = `${cmd} ${args.join(" ")}`
-        console.log(`RUN ${info}`)
-        try {
-            const res = child_process.spawnSync(cmd, args, {
-                stdio: "inherit"
-            })
-            if (res.status != 0)
-                throw new Error(`non-zero status from ${info}`)
-            console.log("converted!")
-            return loadJSONModel(path.join(tmpPath, "model.json"))
-        } finally {
-            if (!options.keepTmp) {
-                if (fs.existsSync(tmpPath)) {
-                    for (const fn of fs.readdirSync(tmpPath)) {
-                        fs.unlinkSync(path.join(tmpPath, fn))
-                    }
-                    fs.rmdirSync(tmpPath)
+        ])
+        return loadJSONModel(path.join(tmpPath, "model.json"))
+    } finally {
+        if (!options.keepTmp) {
+            if (fs.existsSync(tmpPath)) {
+                for (const fn of fs.readdirSync(tmpPath)) {
+                    fs.unlinkSync(path.join(tmpPath, fn))
                 }
+                fs.rmdirSync(tmpPath)
             }
         }
     }
+}
+
+function checkSubdir(modelPath: string, n: string) {
+    const saved = path.join(modelPath, n)
+    if (fs.existsSync(saved))
+        return saved
+    return modelPath
+}
+
+async function loadModel(modelPath: string): Promise<tf.io.ModelArtifacts> {
+    modelPath = checkSubdir(modelPath, "saved_model.pb")
+    modelPath = checkSubdir(modelPath, "model.json")
+
+    let modelBuf = fs.readFileSync(modelPath)
+
+    if (modelBuf[0] == 0x08)
+        return fromPB(modelPath)
+
+    if (modelBuf[0] == 0x89)
+        return fromH5(modelPath)
 
     return loadJSONModel(modelPath)
 
