@@ -3,10 +3,13 @@ import node from 'rollup-plugin-node-resolve';
 import typescript from 'rollup-plugin-typescript2';
 import json from 'rollup-plugin-json'
 
-export default {
-  external: ['@tensorflow/tfjs', '@tensorflow/tfjs-vis'],
+export default [
+  { src: 'src/browser.ts', dst: 'built/ml4f-browser.js' },
+  { src: 'src/node.ts', dst: 'built/ml4f.js' }
+].map(({ src, dst }) => ({
+  external: ['@tensorflow/tfjs'],
 
-  input: 'src/index.ts',
+  input: src,
   plugins: [
     json(),
     typescript({
@@ -24,23 +27,19 @@ export default {
   ],
   output: {
     extend: true,
-    file: `built/full.js`,
+    file: dst,
     format: 'umd',
     name: 'gestrec',
     globals: {
-      '@tensorflow/tfjs': 'tf',
-      '@tensorflow/tfjs-vis': 'tfvis'
+      '@tensorflow/tfjs': 'tf'
     },
     sourcemap: true
   },
   onwarn: (warning) => {
-    const ignoreWarnings = ['CIRCULAR_DEPENDENCY', 'CIRCULAR', 'THIS_IS_UNDEFINED']
-    if (ignoreWarnings.some(w => w === warning.code))
+    const ignoreWarnings = ['EVAL']
+    if (ignoreWarnings.indexOf(warning.code) >= 0)
       return
 
-    if (warning.missing === 'alea')
-      return
-
-    console.warn(warning.message)
+    console.warn(warning.code, warning.message)
   }
-}
+}))

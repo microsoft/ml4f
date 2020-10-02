@@ -159,7 +159,7 @@ function isNear(a: number, b: number) {
     return false
 }
 
-async function run() {
+export async function run() {
     tf.setBackend('cpu');
     const t0 = Date.now()
     U.seedRandom(220)
@@ -220,5 +220,3 @@ function compareModel(m: tf.LayersModel, desc: string) {
         throw e
     }
 }
-
-document.addEventListener('DOMContentLoaded', run);

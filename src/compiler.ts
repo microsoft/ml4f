@@ -215,7 +215,6 @@ function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     .thumb_func
     .fpu fpv4-sp-d16
 // ABI: r0 -> points to magic, r1 -> points to RAM arena
-    // .start 0x70000000             // fake but aligned
 _header:
 `
     for (const h of header)
