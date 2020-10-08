@@ -7,7 +7,6 @@ import { program as commander } from "commander"
 
 interface CmdOptions {
     debug?: boolean;
-    keepTmp?: boolean;
     output?: string;
 }
 
@@ -18,25 +17,6 @@ function mkdirP(thePath: string) {
     if (!fs.existsSync(thePath)) {
         mkdirP(path.dirname(thePath))
         fs.mkdirSync(thePath)
-    }
-}
-
-function rmdir(tmpPath: string) {
-    if (options.keepTmp)
-        return
-    if (fs.existsSync(tmpPath)) {
-        for (const fn of fs.readdirSync(tmpPath)) {
-            fs.unlinkSync(path.join(tmpPath, fn))
-        }
-        fs.rmdirSync(tmpPath)
-    }
-}
-
-function rm(tmpPath: string) {
-    if (options.keepTmp)
-        return
-    if (fs.existsSync(tmpPath)) {
-        fs.unlinkSync(tmpPath)
     }
 }
 
@@ -101,28 +81,20 @@ function runCmd(cmd: string, args: string[]) {
 
 function fromPB(modelPath: string) {
     const tmpPath = built("converted.h5")
-    try {
-        runCmd("python3", [
-            "-c", `import tensorflow; m = tensorflow.keras.models.load_model('${path.dirname(modelPath)}'); m.save('${tmpPath}')`
-        ])
-        return loadModel(tmpPath)
-    } finally {
-        rm(tmpPath)
-    }
+    runCmd("python3", [
+        "-c", `import tensorflow; m = tensorflow.keras.models.load_model('${path.dirname(modelPath)}'); m.save('${tmpPath}')`
+    ])
+    return loadModel(tmpPath)
 }
 
 function fromH5(modelPath: string) {
-    const tmpPath = built("converted-tfjs")
-    try {
-        runCmd("tensorflowjs_converter", [
-            "--input_format", "keras",
-            "--output_format", "tfjs_layers_model",
-            modelPath, tmpPath
-        ])
-        return loadJSONModel(path.join(tmpPath, "model.json"))
-    } finally {
-        rmdir(tmpPath)
-    }
+    const tmpPath = built("converted.tfjs")
+    runCmd("tensorflowjs_converter", [
+        "--input_format", "keras",
+        "--output_format", "tfjs_layers_model",
+        modelPath, tmpPath
+    ])
+    return loadJSONModel(path.join(tmpPath, "model.json"))
 }
 
 function checkSubdir(modelPath: string, n: string) {
@@ -148,6 +120,13 @@ async function loadModel(modelPath: string): Promise<tf.io.ModelArtifacts> {
 
 }
 
+async function processModelFile(modelFile: string) {
+    mkdirP(options.output)
+    const model = loadModel(modelFile)
+    const m = await tf.loadLayersModel({ load: () => model })
+    m.summary()
+}
+
 export async function mainCli() {
     // require('@tensorflow/tfjs-node');
 
@@ -155,7 +134,6 @@ export async function mainCli() {
     commander
         .version(pkg.version)
         .option("-d, --debug", "enable debugging")
-        .option("-t, --keep-tmp", "keep temporary files")
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .arguments("<model>")
         .parse(process.argv)
@@ -169,14 +147,8 @@ export async function mainCli() {
         process.exit(1)
     }
 
-    const modelFile = commander.args[0]
-
-    mkdirP(options.output)
-
     try {
-        const model = loadModel(modelFile)
-        const m = await tf.loadLayersModel({ load: () => model })
-        m.summary()
+        await processModelFile(commander.args[0])
     } catch (e) {
         console.error(e.stack)
     }
