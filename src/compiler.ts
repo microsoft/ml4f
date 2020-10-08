@@ -31,11 +31,12 @@ interface LayerInfo {
 let inited = false
 const compilers: SMap<LayerCompileInfo> = {
     Conv2D: { compile: compileConv2D, computePaddedInputShape: paddingConv2D },
-    MaxPooling2D: { compile: compileMaxPooling2D },
+    MaxPooling2D: { compile: compileMaxPooling2D, computePaddedInputShape: paddingPool2D },
     Dense: { compile: compileDense },
     Dropout: {},
     Flatten: {},
     InputLayer: {},
+    Reshape: {},
 }
 
 const numFPRegs = 32
@@ -100,6 +101,20 @@ function paddingConv2D(info: LayerInfo) {
 
     for (let i = 1; i <= 2; ++i) {
         const tmp = info.outputShape[i] + config.kernelSize[i - 1] - 1
+        assert(tmp >= res[i])
+        res[i] = tmp
+    }
+
+    return res
+}
+
+function paddingPool2D(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.Pooling2DLayerArgs
+    const res = info.inputShape.slice()
+
+    for (let i = 1; i <= 2; ++i) {
+        // TODO this may be wrong if config.poolSize != config.strides
+        const tmp = info.outputShape[i] * config.strides[i - 1]
         assert(tmp >= res[i])
         res[i] = tmp
     }
