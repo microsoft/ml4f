@@ -7,6 +7,7 @@ export interface Options {
     verbose?: boolean
     testInput?: number[]
     testOutput?: number[]
+    info?: string
 }
 
 export interface ModelInfo {

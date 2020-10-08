@@ -372,31 +372,50 @@ export function shapeElts(shape: tf.Shape) {
     return r
 }
 
-const compilers: SMap<(l: tf.layers.Layer) => ir.Op[]> = {
-    Conv2D: compileConv2D,
-    MaxPooling2D: compileMaxPooling2D,
-    Dense: compileDense,
-    Dropout: noop,
-    Flatten: noop,
-    InputLayer: noop,
+interface LayerCompileInfo {
+    compile?: (l: tf.layers.Layer) => ir.Op[]
+    inPlace?: boolean
+    testable?: boolean
+}
+
+function fixupCompileInfo(info: LayerCompileInfo) {
+    if (info.testable === undefined)
+        info.testable = !!info.compile
+    if (!info.compile) {
+        if (info.inPlace === undefined)
+            info.inPlace = true
+        info.compile = noop
+    }
+}
+
+let inited = false
+const compilers: SMap<LayerCompileInfo> = {
+    Conv2D: { compile: compileConv2D },
+    MaxPooling2D: { compile: compileMaxPooling2D },
+    Dense: { compile: compileDense },
+    Dropout: {},
+    Flatten: {},
+    InputLayer: {},
 }
 
 function isInPlace(layer: tf.layers.Layer) {
-    switch (layer.getClassName()) {
-        case "Dropout":
-        case "Flatten":
-        case "InputLayer":
-            return true
-        default:
-            return false
-    }
+    return !!compilers[layer.getClassName()]?.inPlace
+}
+
+function isTestable(layer: tf.layers.Layer) {
+    return !!compilers[layer.getClassName()]?.testable
 }
 
 function shapeToString(shape: tf.Shape) {
     return `[${shape.filter(x => x != null).join(",")}]`
 }
 
-export function compileModelCore(m: tf.LayersModel, opts: ir.Options = {}) {
+export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
+    if (!inited) {
+        inited = true
+        Object.values(compilers).forEach(fixupCompileInfo)
+    }
+
     ir.reset()
 
     if (opts.verbose)
@@ -449,14 +468,20 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options = {}) {
     const arenaSize = maxSize[0] + maxSize[1]
     modelInfo.arenaSize = arenaSize
 
+    return modelInfo
+}
+
+export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
+    const modelInfo = assignLayerInfos(m, opts)
+
     const ops: ir.Op[][] = []
 
     for (const l of m.layers) {
         const info = getLayerInfo(l)
 
-        const f = compilers[l.getClassName()]
-        if (f) {
-            let tmp = f(l)
+        const cinfo = compilers[l.getClassName()]
+        if (cinfo) {
+            let tmp = cinfo.compile(l)
             const c0 = ir.numCycles(tmp)
             tmp = ir.optimize(tmp)
             const c1 = ir.numCycles(tmp)
@@ -489,7 +514,7 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options = {}) {
 ${ir.stringifyComment(modelInfo.stats)}
 (weights => {
     "use strict";
-    const weightOff = ${arenaSize}
+    const weightOff = ${modelInfo.arenaSize}
     const dataOff = 0
     const mem = new Float32Array(weightOff + ${modelInfo.weights.length})
     mem.fill(1000.2342)
@@ -534,4 +559,50 @@ ${ir.toJSs(modelInfo, flat)}
     }
 
     return res
+}
+
+/**
+ * Split model into single-layer models for testing.
+ */
+export async function* partialModels(m: tf.LayersModel, opts: Options) {
+    let mod: tf.io.ModelArtifacts
+    await m.save({
+        save: m => {
+            mod = m
+            const res: tf.io.SaveResult = {
+                modelArtifactsInfo: {
+                    dateSaved: new Date(),
+                    modelTopologyType: "JSON"
+                }
+            }
+            return Promise.resolve(res)
+        }
+    })
+
+    delete mod.weightData
+    delete mod.weightSpecs
+    const cfg = (mod.modelTopology as any)?.config
+    const layersJson: any[] = cfg?.layers || []
+
+    for (let i = 0; i < m.layers.length; ++i) {
+        const layerJson = layersJson[i]
+        const layer = m.layers[i]
+        const info = getLayerInfo(layer)
+        if (layerJson?.class_name != layer.getClassName())
+            throw new Error("invalid serialization")
+        if (!isTestable(layer))
+            continue
+        const lcfg = layerJson.config
+        lcfg.batch_input_shape = info.inputShape
+        cfg.layers = [layerJson]
+        const copy = await tf.loadLayersModel({ load: () => Promise.resolve(mod) })
+        yield copy
+        layerJson.config.batch_input_shape = info.inputShape
+        // also test it without activation
+        if (lcfg.activation) {
+            lcfg.activation = null
+            const withoutAct = await tf.loadLayersModel({ load: () => Promise.resolve(mod) })
+            yield withoutAct
+        }
+    }
 }

@@ -1,6 +1,6 @@
 import * as tf from '@tensorflow/tfjs'
 import * as U from './util'
-import { CompileResult } from './compiler';
+import { CompileResult, Options } from './compiler';
 import { compileAndTest, setRandomWeights } from './driver';
 
 function sampleModel() {
@@ -108,13 +108,14 @@ export async function runBrowser() {
     U.seedRandom(220)
     // const m = await tf.loadLayersModel("./models/gestures.tfjsmodel.json")
     const sample = sampleModel()
-    // compileModel(sample, { verbose: true }) 
-    logThumb(compileAndTest(sample, "sample"))
+    const opts: Options = { verbose: true }
+    logThumb(compileAndTest(sample, opts))
 
     for (let i = 0; i < 0; ++i) {
         const { model, desc } = randomModel()
+        opts.info = desc
         console.log(desc)
-        compileAndTest(model, desc)
+        compileAndTest(model, opts)
     }
 
     console.log(Date.now() - t0 + "ms")

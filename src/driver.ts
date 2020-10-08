@@ -2,7 +2,7 @@ import * as tf from '@tensorflow/tfjs'
 import { ThumbProcessor } from './thumb';
 import * as assembler from './assembler'
 import * as U from './util'
-import { compileModelCore, CompileResult, shapeElts } from './compiler';
+import { assignLayerInfos, compileModelCore, CompileResult, partialModels, shapeElts } from './compiler';
 import { Options } from './ir';
 
 function mkProcessorFile() {
@@ -74,11 +74,32 @@ export function optionsWithTestData(m: tf.LayersModel, opts: Options) {
     return opts
 }
 
-
 export function compileModel(m: tf.LayersModel, opts: Options) {
     const cres = compileModelCore(m, opts)
     cres.machineCode = assemble(cres.thumb)
     return cres
+}
+
+export async function compileModelAndFullValidate(m: tf.LayersModel, opts: Options) {
+    assignLayerInfos(m, opts)
+
+    console.log("Validating partial models...")
+    const iter = partialModels(m, opts)
+    let idx = 0
+    while (true) {
+        const m = (await iter.next()).value
+        if (!m)
+            break
+        console.log("Test", ++idx)
+        for (const l of m.layers)
+            setRandomWeights(l)
+        compileAndTest(m, opts)
+    }
+
+    console.log("Compiling full model...")
+
+    // also test the top-level one again
+    return compileAndTest(m, opts)
 }
 
 export function validateCompilation(cres: CompileResult) {
@@ -97,18 +118,19 @@ export function validateCompilation(cres: CompileResult) {
         throw new Error("mismatch")
 }
 
-export function compileAndTest(m: tf.LayersModel, desc: string = "") {
-    const verbose = true
+export function compileAndTest(m: tf.LayersModel, options: Options) {
     try {
-        const opts = optionsWithTestData(m, { verbose })
-        const cres = compileModel(m, opts)
+        options = optionsWithTestData(m, options)
+        const cres = compileModel(m, options)
         validateCompilation(cres)
         return cres
     } catch (e) {
-        if (desc)
-            console.log(desc)
-        if (!verbose)
-            compileModelCore(m, { verbose: true })
+        if (options.info)
+            console.log(options.info)
+        if (!options.verbose) {
+            options.verbose = true
+            compileModelCore(m, options)
+        }
         throw e
     }
 }

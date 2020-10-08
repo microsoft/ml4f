@@ -4,11 +4,12 @@ import * as U from '../src/util'
 import * as path from 'path'
 import * as child_process from 'child_process'
 import { program as commander } from "commander"
-import { compileAndTest, compileModel, compileModelCore, optionsWithTestData, validateCompilation } from '../src/main'
+import { compileModel, compileModelAndFullValidate, optionsWithTestData, validateCompilation } from '../src/main'
 
 interface CmdOptions {
     debug?: boolean;
     output?: string;
+    noValidate?: boolean;
 }
 
 let options: CmdOptions
@@ -129,7 +130,7 @@ async function processModelFile(modelFile: string) {
     const m = await tf.loadLayersModel({ load: () => model })
 
     const opts = optionsWithTestData(m, { verbose: options.debug })
-    const cres = compileModel(m, opts)
+    const cres = options.noValidate ? compileModel(m, opts) : await compileModelAndFullValidate(m, opts)
 
     write(".asm", cres.thumb)
     write(".js", cres.js)
@@ -152,6 +153,7 @@ export async function mainCli() {
     commander
         .version(pkg.version)
         .option("-d, --debug", "enable debugging")
+        .option("-n, --no-validate", "don't validate resulting model")
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .arguments("<model>")
         .parse(process.argv)
