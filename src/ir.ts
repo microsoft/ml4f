@@ -3,7 +3,6 @@
 import { asmDeps, asmFns } from './library'
 import * as U from './util'
 
-
 export interface Options {
     verbose?: boolean
     testInput?: number[]
@@ -766,4 +765,8 @@ export function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
         }
     }
     return res
+}
+
+export function reset() {
+    repIdx = 0
 }
