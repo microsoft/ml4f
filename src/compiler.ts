@@ -102,6 +102,19 @@ function compileConv2D(layer: tf.layers.Layer) {
     const inpw = info.inputShape[2]
     const inpch = info.inputShape[3]
 
+    const outh = info.outputShape[1]
+    const outw = info.outputShape[2]
+    const outch = info.outputShape[3]
+
+    const paddingX = outw - (inpw - kw + 1)
+    const paddingY = outh - (inph - kh + 1)
+    assert(paddingX >= 0, "x0")
+    assert(paddingY >= 0, "y0")
+    const paddingX0 = paddingX >> 1
+    const paddingX1 = paddingX - paddingX0
+    const paddingY0 = paddingY >> 1
+    const paddingY1 = paddingY - paddingY0
+
     // padding not implemented yet
     assert(kh <= inph, "KH2")
     assert(kw <= inpw, "KW2")
@@ -110,7 +123,7 @@ function compileConv2D(layer: tf.layers.Layer) {
     assert(weights[0].length == kw, "KW")
     assert(weights[0][0].length == inpch, "CH")
     assert(weights[0][0][0].length == config.filters, "F")
-    assert(info.outputShape[3] == config.filters, "FF")
+    assert(outch == config.filters, "FF")
 
     const weightData = info.model.weights
     const weightsIdx = weightData.length
@@ -151,7 +164,7 @@ function compileConv2D(layer: tf.layers.Layer) {
                 res.push(ir.load0(ir.Reg.S0))
 
             res.push(
-                ir.repeat(info.outputShape[1] * info.outputShape[2], () => [
+                ir.repeat(outw * outh, () => [
                     ir.store(ir.Reg.OutputPtr, 0, 1, false),
                     ir.addPtr(ir.Reg.OutputPtr, null, config.filters)
                 ]))
@@ -174,8 +187,8 @@ function compileConv2D(layer: tf.layers.Layer) {
                     const wSkip = strw * inpch
                     const hSkip = strh * inpw * inpch
 
-                    res.push(ir.repeat(info.outputShape[1], () =>
-                        [ir.repeat(info.outputShape[2], () => ir.flatten(
+                    res.push(ir.repeat(outh, () =>
+                        [ir.repeat(outw, () => ir.flatten(
                             ir.load(ir.Reg.S0, chunk, ir.Reg.InputPtr, true),
                             ir.addPtr(ir.Reg.InputPtr, null, wSkip - chunk),
                             U.range(chunk + 1).map(i =>
@@ -188,7 +201,7 @@ function compileConv2D(layer: tf.layers.Layer) {
                             ir.store(ir.Reg.OutputPtr, ir.Reg.S0, 1, false),
                             ir.addPtr(ir.Reg.OutputPtr, null, config.filters)
                         )),
-                        ir.addPtr(ir.Reg.InputPtr, null, hSkip - info.outputShape[2] * wSkip)]))
+                        ir.addPtr(ir.Reg.InputPtr, null, hSkip - outw * wSkip)]))
                 }
 
                 return res
