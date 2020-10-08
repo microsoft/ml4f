@@ -287,6 +287,12 @@ export class ThumbProcessor extends assembler.AbstractProcessor {
         this.addInst32("movw  $R0, $I2", 0xf2400000, 0xfbf08000);
         this.addInst32("add   $R0, $R1, $R3, lsl $I3", 0xeb000000, 0xfff08000);
 
+        // encoding $i0 is only a subset of allowed constants
+        this.addInst32("subs  $R0, $R1, $i0", 0xf1b00000, 0xfff08000)
+        this.addInst32("sub   $R0, $R1, $i0", 0xf1a00000, 0xfff08000)
+        this.addInst32("adds  $R0, $R1, $i0", 0xf1100000, 0xfff08000)
+        this.addInst32("add   $R0, $R1, $i0", 0xf1000000, 0xfff08000)
+
         allConds((cond, id) =>
             this.addInst32(`b${cond} $LB`, 0xf0008000 | (id << 22), 0xfbc0d000), true)
 
