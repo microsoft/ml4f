@@ -2,14 +2,15 @@ import * as tf from '@tensorflow/tfjs'
 import { ThumbProcessor } from './thumb';
 import * as assembler from './assembler'
 import * as U from './util'
-import { compileModel, CompileResult, shapeElts } from './compiler';
+import { compileModelCore, CompileResult, shapeElts } from './compiler';
+import { Options } from './ir';
 
 function mkProcessorFile() {
     const b = new assembler.File(new ThumbProcessor())
 
     b.ei.testAssembler(); // just in case
 
-    //   b.disablePeepHole = true
+    b.disablePeepHole = true
 
     b.lookupExternalLabel = _name => null;
     b.normalizeExternalLabel = s => s;
@@ -64,41 +65,50 @@ function isNear(a: number, b: number) {
     return false
 }
 
+export function optionsWithTestData(m: tf.LayersModel, opts: Options) {
+    const randomInput = randomTensor(m.inputs[0].shape)
+    const resTensor = m.predict(randomInput) as tf.Tensor
+    opts = U.flatClone(opts)
+    opts.testInput = randomInput.flatten().arraySync()
+    opts.testOutput = resTensor.flatten().arraySync()
+    return opts
+}
+
+
+export function compileModel(m: tf.LayersModel, opts: Options) {
+    const cres = compileModelCore(m, opts)
+    cres.machineCode = assemble(cres.thumb)
+    return cres
+}
+
+export function validateCompilation(cres: CompileResult) {
+    const opts = cres.options
+    const res = opts.testOutput
+    const res2 = cres.execute(opts.testInput)
+    let numerr = 0
+    for (let i = 0; i < res2.length; ++i) {
+        if (!isNear(res[i], res2[i])) {
+            console.log(`at ${i} ${res[i]} - ${res2[i]} = ${res[i] - res2[i]}`)
+            numerr++
+            if (numerr > 5) break
+        }
+    }
+    if (numerr)
+        throw new Error("mismatch")
+}
+
 export function compileAndTest(m: tf.LayersModel, desc: string = "") {
     const verbose = true
     try {
-        const randomInput = randomTensor(m.inputs[0].shape)
-        const resTensor = m.predict(randomInput) as tf.Tensor
-        const res = resTensor.flatten().arraySync()
-        const cres = compileModel(m, {
-            verbose,
-            testInput: randomInput.flatten().arraySync(),
-            testOutput: res
-        })
-        //console.log(res)
-        const res2 = cres.execute(randomInput.flatten().arraySync())
-        //console.log(res2)
-
-        let numerr = 0
-        for (let i = 0; i < res2.length; ++i) {
-            if (!isNear(res[i], res2[i])) {
-                console.log(`at ${i} ${res[i]} - ${res2[i]} = ${res[i] - res2[i]}`)
-                numerr++
-                if (numerr > 5) break
-            }
-        }
-
-        if (numerr)
-            throw new Error("mismatch")
-
-        cres.machineCode = assemble(cres.thumb)
-
+        const opts = optionsWithTestData(m, { verbose })
+        const cres = compileModel(m, opts)
+        validateCompilation(cres)
         return cres
     } catch (e) {
         if (desc)
             console.log(desc)
         if (!verbose)
-            compileModel(m, { verbose: true })
+            compileModelCore(m, { verbose: true })
         throw e
     }
 }

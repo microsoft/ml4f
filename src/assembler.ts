@@ -1085,9 +1085,6 @@ export class File {
     }
 
     private peepPass(reallyFinal: boolean) {
-        if (this.disablePeepHole)
-            return;
-
         this.peepOps = 0;
         this.peepDel = 0;
         this.peepCounts = {}
@@ -1140,11 +1137,13 @@ export class File {
         if (this.errors.length > 0)
             return;
 
-        let maxPasses = 5
-        for (let i = 0; i < maxPasses; ++i) {
-            console.debug(`Peephole OPT, pass ${i}`)
-            this.peepPass(i == maxPasses);
-            if (this.peepOps == 0) break;
+        if (!this.disablePeepHole) {
+            let maxPasses = 5
+            for (let i = 0; i < maxPasses; ++i) {
+                console.debug(`Peephole OPT, pass ${i}`)
+                this.peepPass(i == maxPasses);
+                if (this.peepOps == 0) break;
+            }
         }
     }
 }

@@ -16,6 +16,7 @@ export interface ModelInfo {
     outputShape: number[];
     outputOffset: number;
     opts: Options;
+    stats: string;
 }
 
 export enum OpCode {
@@ -190,8 +191,14 @@ export function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     addShape(modelInfo.inputShape, "input")
     addShape(modelInfo.outputShape, "output")
 
+    let initCmt = ""
+    while (ops[0]?.opcode == OpCode.comment) {
+        const op = ops.shift()
+        initCmt += stringifyComment(op.fname) + "\n"
+    }
+
     let regAlloc: SMap<number> = {}
-    let resText = `
+    let resText = `${stringifyComment(modelInfo.stats)}
     .cpu cortex-m4
     .text
     .arch armv7e-m

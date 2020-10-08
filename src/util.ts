@@ -18,12 +18,10 @@ export function lookup<T>(m: pxt.Map<T>, key: string): T {
     return null
 }
 
-
 export function oops(msg = "OOPS"): Error {
     debugger
     throw new Error(msg)
 }
-
 
 export function endsWith(str: string, suffix: string) {
     if (str.length < suffix.length) return false
@@ -37,7 +35,6 @@ export function startsWith(str: string, prefix: string) {
     return str.slice(0, prefix.length) == prefix
 }
 
-
 export function iterMap<T>(m: pxt.Map<T>, f: (k: string, v: T) => void) {
     Object.keys(m).forEach(k => f(k, m[k]))
 }
@@ -47,7 +44,6 @@ export function mapMap<T, S>(m: pxt.Map<T>, f: (k: string, v: T) => S) {
     Object.keys(m).forEach(k => r[k] = f(k, m[k]))
     return r
 }
-
 
 export function pushRange<T>(trg: T[], src: ArrayLike<T>): void {
     for (let i = 0; i < src.length; ++i)
@@ -113,4 +109,13 @@ export function randomUFloat() {
 
 export function randomSFloat() {
     return 2 * randomUFloat() - 1;
+}
+
+export function flatClone<T>(v: T): T {
+    const s = v as any
+    const d: any = {}
+    for (const k of Object.keys(s)) {
+        d[k] = s[k]
+    }
+    return d
 }

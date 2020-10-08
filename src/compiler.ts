@@ -7,6 +7,13 @@ import * as U from './util'
 import * as ir from "./ir"
 
 export type Options = ir.Options
+export interface CompileResult {
+    execute: (inp: ArrayLike<number>) => Float32Array
+    js: string
+    thumb: string
+    machineCode: Uint8Array
+    options: Options
+}
 
 interface LayerInfo {
     layer: tf.layers.Layer;
@@ -378,24 +385,18 @@ function isInPlace(layer: tf.layers.Layer) {
     switch (layer.getClassName()) {
         case "Dropout":
         case "Flatten":
+        case "InputLayer":
             return true
         default:
             return false
     }
 }
 
-export interface CompileResult {
-    execute: (inp: ArrayLike<number>) => Float32Array
-    js: string
-    thumb: string
-    machineCode: Uint8Array
-}
-
 function shapeToString(shape: tf.Shape) {
     return `[${shape.filter(x => x != null).join(",")}]`
 }
 
-export function compileModel(m: tf.LayersModel, opts: ir.Options = {}) {
+export function compileModelCore(m: tf.LayersModel, opts: ir.Options = {}) {
     ir.reset()
 
     if (opts.verbose)
@@ -410,6 +411,7 @@ export function compileModel(m: tf.LayersModel, opts: ir.Options = {}) {
         outputOffset: -1,
         arenaSize: -1,
         opts,
+        stats: ""
     }
 
     let maxSize = [shapeElts(inputShape), 0]
@@ -478,12 +480,13 @@ export function compileModel(m: tf.LayersModel, opts: ir.Options = {}) {
 
     const cycles = ir.numCycles(flat)
     const cycleinfo = `total cycles: ${cycles} (${(cycles / 84000).toFixed(3)}ms at 84MHz)`
-    flat.unshift(ir.comment(cycleinfo))
+    modelInfo.stats = cycleinfo
 
     if (opts.verbose)
-        console.log(cycleinfo)
+        console.log(modelInfo.stats)
 
     const js = `
+${ir.stringifyComment(modelInfo.stats)}
 (weights => {
     "use strict";
     const weightOff = ${arenaSize}
@@ -526,7 +529,8 @@ ${ir.toJSs(modelInfo, flat)}
         execute: (eval(js))(modelInfo.weights),
         js,
         thumb,
-        machineCode: null
+        machineCode: null,
+        options: opts
     }
 
     return res
