@@ -64,8 +64,10 @@ export interface Op {
 
 
 function assert(cond: boolean, msg = "assertion failed") {
-    if (!cond)
-        throw new Error(msg)
+    if (!cond) {
+        debugger
+        throw new Error("ir: " + msg)
+    }
 }
 
 const unrollLimit = 10
@@ -324,9 +326,13 @@ _header:
         return r.indexOf("<fake") >= 0
     }
 
+    function isLowReg(reg: string) {
+        return /^r[0-7]$/.test(reg)
+    }
+
     function loadConst(dst: string, num: number) {
         // TODO?
-        if (num <= 0xff)
+        if (num <= 0xff && isLowReg(dst))
             write(`movs ${dst}, #${num}`)
         else
             write(`movw ${dst}, #${num}`)
@@ -375,7 +381,10 @@ _header:
                         write(`cmp ${dst}, #${op.num}`)
                         write(`blt ${lbl}`)
                     } else {
-                        write(`subs ${dst}, #1`)
+                        if (isLowReg(dst))
+                            write(`subs ${dst}, #1`)
+                        else
+                            write(`subs ${dst}, ${dst}, #1`)
                         write(`bne ${lbl}`)
                     }
                 })

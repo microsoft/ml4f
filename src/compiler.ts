@@ -575,12 +575,12 @@ function compilePadding(info: LayerInfo) {
         const reps = (n - leftover) / numData
         if (reps)
             res.push(ir.repeat(reps, () => [
-                ir.load(Reg.InputPtr, dataReg, numData, true),
+                ir.load(dataReg, numData, Reg.InputPtr, true),
                 ir.store(Reg.OutputPtr, dataReg, numData, true)
             ]))
         if (leftover) {
             res.push(
-                ir.load(Reg.InputPtr, dataReg, leftover, true),
+                ir.load(dataReg, leftover, Reg.InputPtr, true),
                 ir.store(Reg.OutputPtr, dataReg, leftover, true))
         }
         return res
@@ -661,7 +661,7 @@ ${ir.stringifyComment(modelInfo.stats)}
         return arr[0]
     }
     return (inputs => {
-        if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).inputShape)})
+        if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).rawInputShape)})
             throw new Error("invalid input size")
         mem.set(inputs, dataOff)
         let input, output, kernel
