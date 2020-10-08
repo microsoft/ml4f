@@ -8,9 +8,41 @@ import { program as commander } from "commander"
 interface CmdOptions {
     debug?: boolean;
     keepTmp?: boolean;
+    output?: string;
 }
 
 let options: CmdOptions
+
+function mkdirP(thePath: string) {
+    if (thePath == "." || !thePath) return;
+    if (!fs.existsSync(thePath)) {
+        mkdirP(path.dirname(thePath))
+        fs.mkdirSync(thePath)
+    }
+}
+
+function rmdir(tmpPath: string) {
+    if (options.keepTmp)
+        return
+    if (fs.existsSync(tmpPath)) {
+        for (const fn of fs.readdirSync(tmpPath)) {
+            fs.unlinkSync(path.join(tmpPath, fn))
+        }
+        fs.rmdirSync(tmpPath)
+    }
+}
+
+function rm(tmpPath: string) {
+    if (options.keepTmp)
+        return
+    if (fs.existsSync(tmpPath)) {
+        fs.unlinkSync(tmpPath)
+    }
+}
+
+function built(fn: string) {
+    return path.join(options.output, fn)
+}
 
 function loadJSONModel(modelPath: string) {
     const modelBuf = fs.readFileSync(modelPath)
@@ -68,22 +100,19 @@ function runCmd(cmd: string, args: string[]) {
 }
 
 function fromPB(modelPath: string) {
-    const tmpPath = "ml4f-tmppb-" + U.randomUint32() + ".h5"
+    const tmpPath = built("converted.h5")
     try {
         runCmd("python3", [
             "-c", `import tensorflow; m = tensorflow.keras.models.load_model('${path.dirname(modelPath)}'); m.save('${tmpPath}')`
         ])
         return loadModel(tmpPath)
     } finally {
-        if (!options.keepTmp) {
-            if (fs.existsSync(tmpPath))
-                fs.unlinkSync(tmpPath)
-        }
+        rm(tmpPath)
     }
 }
 
 function fromH5(modelPath: string) {
-    const tmpPath = "ml4f-tmp-" + U.randomUint32()
+    const tmpPath = built("converted-tfjs")
     try {
         runCmd("tensorflowjs_converter", [
             "--input_format", "keras",
@@ -92,14 +121,7 @@ function fromH5(modelPath: string) {
         ])
         return loadJSONModel(path.join(tmpPath, "model.json"))
     } finally {
-        if (!options.keepTmp) {
-            if (fs.existsSync(tmpPath)) {
-                for (const fn of fs.readdirSync(tmpPath)) {
-                    fs.unlinkSync(path.join(tmpPath, fn))
-                }
-                fs.rmdirSync(tmpPath)
-            }
-        }
+        rmdir(tmpPath)
     }
 }
 
@@ -134,10 +156,13 @@ export async function mainCli() {
         .version(pkg.version)
         .option("-d, --debug", "enable debugging")
         .option("-t, --keep-tmp", "keep temporary files")
+        .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .arguments("<model>")
         .parse(process.argv)
 
     options = commander as CmdOptions
+
+    if (!options.output) options.output = "built"
 
     if (commander.args.length != 1) {
         console.error("exactly one model argument expected")
@@ -145,6 +170,8 @@ export async function mainCli() {
     }
 
     const modelFile = commander.args[0]
+
+    mkdirP(options.output)
 
     try {
         const model = loadModel(modelFile)
