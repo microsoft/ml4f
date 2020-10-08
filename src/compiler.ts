@@ -5,6 +5,7 @@ import * as tfi from './tfi'
 import * as U from './util'
 
 import * as ir from "./ir"
+import { Reg } from "./ir"
 
 export type Options = ir.Options
 export interface CompileResult {
@@ -72,12 +73,12 @@ function addActivation(res: ir.Op[], layer: tf.layers.Layer) {
     if (config.activation == "linear")
         return // linear is identity
 
-    res.push(ir.loadDataAddr(ir.Reg.OutputPtr, info.outputOff))
+    res.push(ir.loadDataAddr(Reg.OutputPtr, info.outputOff))
 
     if (config.activation == "relu")
-        res.push(ir.repeat(numoutp, () => [ir.relu(ir.Reg.OutputPtr)]))
+        res.push(ir.repeat(numoutp, () => [ir.relu(Reg.OutputPtr)]))
     else if (config.activation == "softmax")
-        res.push(ir.fcall("softmax", ir.Reg.OutputPtr, numoutp))
+        res.push(ir.fcall("softmax", Reg.OutputPtr, numoutp))
     else
         unsupported("activation: " + config.activation)
 }
@@ -147,26 +148,26 @@ function compileConv2D(layer: tf.layers.Layer) {
     }
 
     const res = [
-        ir.loadWeightAddr(ir.Reg.KernelPtr, weightsIdx),
+        ir.loadWeightAddr(Reg.KernelPtr, weightsIdx),
         ir.repeatIdx(config.filters, filt => {
             const res: ir.Op[] = []
 
             const setOutput = (res: ir.Op[]) => {
-                res.push(ir.loadDataAddr(ir.Reg.OutputPtr, info.outputOff))
-                res.push(ir.addPtr(ir.Reg.OutputPtr, filt))
+                res.push(ir.loadDataAddr(Reg.OutputPtr, info.outputOff))
+                res.push(ir.addPtr(Reg.OutputPtr, filt))
             }
 
             // set bias
             setOutput(res)
             if (config.useBias)
-                res.push(ir.load(ir.Reg.S0, 1, ir.Reg.KernelPtr, true))
+                res.push(ir.load(Reg.S0, 1, Reg.KernelPtr, true))
             else
-                res.push(ir.load0(ir.Reg.S0))
+                res.push(ir.load0(Reg.S0))
 
             res.push(
                 ir.repeat(outw * outh, () => [
-                    ir.store(ir.Reg.OutputPtr, 0, 1, false),
-                    ir.addPtr(ir.Reg.OutputPtr, null, config.filters)
+                    ir.store(Reg.OutputPtr, Reg.S0, 1, false),
+                    ir.addPtr(Reg.OutputPtr, null, config.filters)
                 ]))
 
             res.push(ir.repeatIdx(kh, kline => {
@@ -177,10 +178,10 @@ function compileConv2D(layer: tf.layers.Layer) {
                     chunk = kernSz - kernOff
                     if (chunk > flashRegs)
                         chunk = flashRegs
-                    res.push(ir.load(memRegs, chunk, ir.Reg.KernelPtr, true))
+                    res.push(ir.load(memRegs, chunk, Reg.KernelPtr, true))
 
-                    res.push(ir.loadDataAddr(ir.Reg.InputPtr, info.inputOff + kernOff))
-                    res.push(ir.addPtr(ir.Reg.InputPtr, kline, inpw * inpch))
+                    res.push(ir.loadDataAddr(Reg.InputPtr, info.inputOff + kernOff))
+                    res.push(ir.addPtr(Reg.InputPtr, kline, inpw * inpch))
 
                     setOutput(res)
 
@@ -189,19 +190,19 @@ function compileConv2D(layer: tf.layers.Layer) {
 
                     res.push(ir.repeat(outh, () =>
                         [ir.repeat(outw, () => ir.flatten(
-                            ir.load(ir.Reg.S0, chunk, ir.Reg.InputPtr, true),
-                            ir.addPtr(ir.Reg.InputPtr, null, wSkip - chunk),
+                            ir.load(Reg.S0, chunk, Reg.InputPtr, true),
+                            ir.addPtr(Reg.InputPtr, null, wSkip - chunk),
                             U.range(chunk + 1).map(i =>
                                 [
                                     i < chunk ? ir.vmul(i, i, i + memRegs) : null,
-                                    i >= 2 ? ir.vadd(ir.Reg.S0, ir.Reg.S0, i - 1) : null
+                                    i >= 2 ? ir.vadd(Reg.S0, Reg.S0, i - 1) : null
                                 ]),
-                            ir.load(ir.Reg.S1, 1, ir.Reg.OutputPtr, false),
-                            ir.vadd(ir.Reg.S0, ir.Reg.S0, ir.Reg.S1),
-                            ir.store(ir.Reg.OutputPtr, ir.Reg.S0, 1, false),
-                            ir.addPtr(ir.Reg.OutputPtr, null, config.filters)
+                            ir.load(Reg.S1, 1, Reg.OutputPtr, false),
+                            ir.vadd(Reg.S0, Reg.S0, Reg.S1),
+                            ir.store(Reg.OutputPtr, Reg.S0, 1, false),
+                            ir.addPtr(Reg.OutputPtr, null, config.filters)
                         )),
-                        ir.addPtr(ir.Reg.InputPtr, null, hSkip - outw * wSkip)]))
+                        ir.addPtr(Reg.InputPtr, null, hSkip - outw * wSkip)]))
                 }
 
                 return res
@@ -245,17 +246,17 @@ function compileMaxPooling2D(layer: tf.layers.Layer) {
     return [
         ir.repeatIdx(numch, filt => {
             const res = [
-                ir.loadDataAddr(ir.Reg.OutputPtr, info.outputOff),
-                ir.addPtr(ir.Reg.OutputPtr, filt),
-                ir.loadDataAddr(ir.Reg.InputPtr, info.inputOff),
-                ir.addPtr(ir.Reg.InputPtr, filt),
+                ir.loadDataAddr(Reg.OutputPtr, info.outputOff),
+                ir.addPtr(Reg.OutputPtr, filt),
+                ir.loadDataAddr(Reg.InputPtr, info.inputOff),
+                ir.addPtr(Reg.InputPtr, filt),
             ]
 
-            const ptrRegs = U.range(kh - 1).map(i => ir.Reg.Tmp0 + i)
-            ptrRegs.unshift(ir.Reg.InputPtr)
+            const ptrRegs = U.range(kh - 1).map(i => Reg.Tmp0 + i)
+            ptrRegs.unshift(Reg.InputPtr)
 
             for (let i = 1; i < kh; ++i) {
-                const op = ir.addPtr(ptrRegs[i], null, lineW * i, ir.Reg.InputPtr)
+                const op = ir.addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr)
                 op.isDef = true
                 res.push(op)
             }
@@ -266,21 +267,21 @@ function compileMaxPooling2D(layer: tf.layers.Layer) {
                         const res: ir.Op[] = []
                         for (let i = 0; i < kh; ++i) {
                             for (let j = 0; j < kw; ++j) {
-                                const reg = i == 0 && j == 0 ? ir.Reg.S0 : ir.Reg.S1
+                                const reg = i == 0 && j == 0 ? Reg.S0 : Reg.S1
                                 res.push(
                                     ir.load(reg, 1, ptrRegs[i], true),
                                     ir.addPtr(ptrRegs[i], null, numch - 1)
                                 )
-                                if (reg != ir.Reg.S0)
-                                    res.push(ir.vmax(ir.Reg.S0, ir.Reg.S0, reg))
+                                if (reg != Reg.S0)
+                                    res.push(ir.vmax(Reg.S0, Reg.S0, reg))
                             }
                             res.push(
                                 ir.addPtr(ptrRegs[i], null, (strw - kw) * numch)
                             )
                         }
                         res.push(
-                            ir.store(ir.Reg.OutputPtr, ir.Reg.S0, 1, true),
-                            ir.addPtr(ir.Reg.OutputPtr, null, numch - 1)
+                            ir.store(Reg.OutputPtr, Reg.S0, 1, true),
+                            ir.addPtr(Reg.OutputPtr, null, numch - 1)
                         )
                         return res
                     }),
@@ -296,7 +297,7 @@ function compileDense(layer: tf.layers.Layer) {
     const info = getLayerInfo(layer)
 
     const maxChunk = (numFPRegs >> 1) - 2
-    const memReg0 = ir.Reg.S1
+    const memReg0 = Reg.S1
     const flashReg0 = memReg0 + maxChunk
 
     //if (info.model.opts.verbose)
@@ -334,25 +335,25 @@ function compileDense(layer: tf.layers.Layer) {
     }
 
     const res = [
-        ir.loadWeightAddr(ir.Reg.KernelPtr, weightsIdx),
-        ir.loadDataAddr(ir.Reg.OutputPtr, info.outputOff),
+        ir.loadWeightAddr(Reg.KernelPtr, weightsIdx),
+        ir.loadDataAddr(Reg.OutputPtr, info.outputOff),
         ir.repeat(config.units, () => {
             const res: ir.Op[] = []
 
             // set bias
             if (config.useBias)
-                res.push(ir.load(ir.Reg.S0, 1, ir.Reg.KernelPtr, true))
+                res.push(ir.load(Reg.S0, 1, Reg.KernelPtr, true))
             else
-                res.push(ir.load0(ir.Reg.S0))
+                res.push(ir.load0(Reg.S0))
 
-            res.push(ir.loadDataAddr(ir.Reg.InputPtr, info.inputOff))
+            res.push(ir.loadDataAddr(Reg.InputPtr, info.inputOff))
 
             const addChunk = (len: number) => ir.flatten(
-                ir.load(memReg0, len, ir.Reg.InputPtr, true),
-                ir.load(flashReg0, len, ir.Reg.KernelPtr, true),
+                ir.load(memReg0, len, Reg.InputPtr, true),
+                ir.load(flashReg0, len, Reg.KernelPtr, true),
                 U.range(len + 1).map(i => [
                     i < len ? ir.vmul(memReg0 + i, memReg0 + i, flashReg0 + i) : null,
-                    i >= 1 ? ir.vadd(ir.Reg.S0, ir.Reg.S0, memReg0 + i - 1) : null
+                    i >= 1 ? ir.vadd(Reg.S0, Reg.S0, memReg0 + i - 1) : null
                 ])
             )
 
@@ -363,7 +364,7 @@ function compileDense(layer: tf.layers.Layer) {
             if (left > 0)
                 U.pushRange(res, addChunk(left))
 
-            res.push(ir.store(ir.Reg.OutputPtr, ir.Reg.S0, 1, true))
+            res.push(ir.store(Reg.OutputPtr, Reg.S0, 1, true))
 
             return res
         })]
