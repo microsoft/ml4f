@@ -24,6 +24,7 @@ interface LayerInfo {
 }
 
 enum OpCode {
+    comment,
     repeat,
     loadWeightAddr,
     loadDataAddr,
@@ -73,6 +74,11 @@ function unsupported(msg: string) {
     throw new Error("Unsupported operator or config: " + msg)
 }
 
+function stringifyComment(msg: string) {
+    if (!msg) return ""
+    return "// " + msg.replace(/\n/g, "\n// ")
+}
+
 function assert(cond: boolean, msg = "assertion failed") {
     if (!cond)
         unsupported(msg)
@@ -100,6 +106,8 @@ function numCycles(ops: Op[]): number {
     const addConst = (k: number) => k < (1 << 12) ? 1 : 2
     for (const op of ops) {
         switch (op.opcode) {
+            case OpCode.comment:
+                break
             case OpCode.repeat:
                 cycles += (numCycles(op.body) + 4 + (op.isDef ? 1 : 0)) * op.num + 1
                 break
@@ -366,6 +374,9 @@ _header:
         const incr = op.increment ? "!" : ""
 
         switch (op.opcode) {
+            case OpCode.comment:
+                write(stringifyComment(op.fname))
+                break
             case OpCode.repeat:
                 assert(op.num >= 1)
                 alloc(op.dst, () => {
@@ -477,6 +488,8 @@ function toJS(op: Op): string {
     const srcAlt = op.srcAlt == null ? null : reg(op.srcAlt)
 
     switch (op.opcode) {
+        case OpCode.comment:
+            return stringifyComment(op.fname) + "\n"
         case OpCode.repeat:
             return `for (let ${dst} = 0; ${dst} < ${op.num}; ${dst}++) {\n${indent(toJSs(op.body))}}\n`
         case OpCode.loadWeightAddr:
@@ -578,6 +591,13 @@ function repeat(n: number, f: () => Op[]): Op {
     const r = repeatIdx(n, f)
     r.isDef = false
     return r
+}
+
+function comment(str: string): Op {
+    return {
+        opcode: OpCode.comment,
+        fname: str
+    }
 }
 
 function loadWeightAddr(dst: Reg, idx: number): Op {
@@ -942,8 +962,8 @@ function compileDense(layer: tf.layers.Layer) {
     const memReg0 = Reg.S1
     const flashReg0 = memReg0 + maxChunk
 
-    if (info.model.opts.verbose)
-        console.log(info.inputShape, info.outputShape, config)
+    //if (info.model.opts.verbose)
+    //    console.log(info.inputShape, info.outputShape, config)
 
     if (info.inputShape.length != 2)
         unsupported("inputShape: " + info.inputShape.length)
@@ -1099,6 +1119,7 @@ const compilers: SMap<(l: tf.layers.Layer) => Op[]> = {
     Dense: compileDense,
     Dropout: noop,
     Flatten: noop,
+    InputLayer: noop,
 }
 
 function isInPlace(layer: tf.layers.Layer) {
@@ -1119,7 +1140,13 @@ export interface Options {
 
 export interface CompileResult {
     execute: (inp: ArrayLike<number>) => Float32Array
+    js: string
     thumb: string
+    machineCode: Uint8Array
+}
+
+function shapeToString(shape: tf.Shape) {
+    return `[${shape.filter(x => x != null).join(",")}]`
 }
 
 export function compileModel(m: tf.LayersModel, opts: Options = {}) {
@@ -1127,7 +1154,6 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
 
     if (opts.verbose)
         m.summary()
-
 
     const inputShape = m.layers[0].batchInputShape
 
@@ -1186,8 +1212,14 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
             const c0 = numCycles(tmp)
             tmp = optimize(tmp)
             const c1 = numCycles(tmp)
+            const optRate = 100 * (c0 - c1) / c0
+            const optinfo = c0 ? `${c1} cycles (${optRate.toFixed(1)}% opt)` : "(no computation)"
+            const shapeinfo = `data: ${shapeToString(info.inputShape)} => ${shapeToString(info.outputShape)}`
+            const meminfo = `mem: @${info.inputOff} -> @${info.outputOff}`
+            const infostr = `Layer: ${l.getClassName()}; ${optinfo} ${shapeinfo} ${meminfo}`
+            tmp.unshift(comment(infostr))
             if (opts.verbose)
-                console.log(l.getClassName(), c0, c1, info.inputShape, info.inputOff, info.outputOff)
+                console.log(infostr)
             ops.push(tmp)
         } else
             console.log("unsupported layer: ", l.getClassName())
@@ -1198,7 +1230,14 @@ export function compileModel(m: tf.LayersModel, opts: Options = {}) {
     const lastInfo = getLayerInfo(m.layers[m.layers.length - 1])
     modelInfo.outputOffset = lastInfo.outputOff
 
-    let fn = `
+    const cycles = numCycles(flat)
+    const cycleinfo = `total cycles: ${cycles} (${(cycles / 84000).toFixed(3)}ms at 84MHz)`
+    flat.unshift(comment(cycleinfo))
+
+    if (opts.verbose)
+        console.log(cycleinfo)
+
+    const js = `
 (weights => {
     "use strict";
     const weightOff = ${arenaSize}
@@ -1236,14 +1275,12 @@ ${toJSs(flat)}
 })
 `
 
-    if (opts.verbose) {
-        console.log(fn)
-        console.log("cycles:", numCycles(flat))
-    }
-
+    const thumb = toThumb(modelInfo, flat)
     const res: CompileResult = {
-        execute: (eval(fn))(modelInfo.weights),
-        thumb: toThumb(modelInfo, flat)
+        execute: (eval(js))(modelInfo.weights),
+        js,
+        thumb,
+        machineCode: null
     }
 
     return res

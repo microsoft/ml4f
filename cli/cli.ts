@@ -4,6 +4,7 @@ import * as U from '../src/util'
 import * as path from 'path'
 import * as child_process from 'child_process'
 import { program as commander } from "commander"
+import { compileAndTest } from '../src/main'
 
 interface CmdOptions {
     debug?: boolean;
@@ -121,10 +122,12 @@ async function loadModel(modelPath: string): Promise<tf.io.ModelArtifacts> {
 }
 
 async function processModelFile(modelFile: string) {
+    tf.setBackend("cpu")
+
     mkdirP(options.output)
     const model = loadModel(modelFile)
     const m = await tf.loadLayersModel({ load: () => model })
-    m.summary()
+    compileAndTest(m)
 }
 
 export async function mainCli() {
