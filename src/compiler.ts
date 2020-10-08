@@ -6,6 +6,7 @@ import * as U from './util'
 
 import * as ir from "./ir"
 import { Reg } from "./ir"
+import { op } from '@tensorflow/tfjs'
 
 export type Options = ir.Options
 export interface CompileResult {
@@ -19,11 +20,22 @@ export interface CompileResult {
 interface LayerInfo {
     layer: tf.layers.Layer;
     model: ir.ModelInfo;
+    rawInputShape: tf.Shape; // before padding
     inputShape: tf.Shape;
-    paddedInputShape: tf.Shape;
     outputShape: tf.Shape;
+    rawInputOff: number; // before padding
     inputOff: number;
     outputOff: number;
+}
+
+let inited = false
+const compilers: SMap<LayerCompileInfo> = {
+    Conv2D: { compile: compileConv2D, computePaddedInputShape: paddingConv2D },
+    MaxPooling2D: { compile: compileMaxPooling2D },
+    Dense: { compile: compileDense },
+    Dropout: {},
+    Flatten: {},
+    InputLayer: {},
 }
 
 const numFPRegs = 32
@@ -82,6 +94,19 @@ function addActivation(res: ir.Op[], info: LayerInfo) {
         unsupported("activation: " + config.activation)
 }
 
+function paddingConv2D(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.ConvLayerArgs
+    const res = info.inputShape.slice()
+
+    for (let i = 1; i <= 2; ++i) {
+        const tmp = info.outputShape[i] + config.kernelSize[i - 1] - 1
+        assert(tmp >= res[i])
+        res[i] = tmp
+    }
+
+    return res
+}
+
 function compileConv2D(info: LayerInfo) {
     const config = info.layer.getConfig() as unknown as tfi.ConvLayerArgs
     const memRegs = numFPRegs >> 1
@@ -105,14 +130,6 @@ function compileConv2D(info: LayerInfo) {
     const outw = info.outputShape[2]
     const outch = info.outputShape[3]
 
-    const paddingX = outw - (inpw - kw + 1)
-    const paddingY = outh - (inph - kh + 1)
-    assert(paddingX >= 0, "x0")
-    assert(paddingY >= 0, "y0")
-    const paddingX0 = paddingX >> 1
-    const paddingX1 = paddingX - paddingX0
-    const paddingY0 = paddingY >> 1
-    const paddingY1 = paddingY - paddingY0
 
     // padding not implemented yet
     assert(kh <= inph, "KH2")
@@ -401,16 +418,6 @@ function fixupCompileInfo(info: LayerCompileInfo) {
         info.computePaddedInputShape = info => info.inputShape.slice()
 }
 
-let inited = false
-const compilers: SMap<LayerCompileInfo> = {
-    Conv2D: { compile: compileConv2D },
-    MaxPooling2D: { compile: compileMaxPooling2D },
-    Dense: { compile: compileDense },
-    Dropout: {},
-    Flatten: {},
-    InputLayer: {},
-}
-
 function isInPlace(layer: tf.layers.Layer) {
     return !!compilers[layer.getClassName()]?.inPlace
 }
@@ -459,11 +466,25 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
         }
         info.outputShape = l.computeOutputShape(info.inputShape) as tf.Shape
         const comp = compilers[l.getClassName()]
-        if (comp) {
-            info.paddedInputShape = comp.computePaddedInputShape(info)
-        }
-        const elts = shapeElts(info.outputShape)
+        const paddedShape = comp ? comp.computePaddedInputShape(info) : info.inputShape.slice()
         info.inputOff = currIdx
+
+        info.rawInputShape = info.inputShape.slice()
+
+        const paddedElts = shapeElts(paddedShape)
+        const needsPadding = shapeElts(info.inputShape) != paddedElts
+        if (needsPadding) {
+            currIdx = currIdx == 0 ? 1 : 0
+            info.rawInputOff = info.inputOff
+            info.inputOff = currIdx
+            info.inputShape = paddedShape
+            if (paddedElts > maxSize[currIdx])
+                maxSize[currIdx] = paddedElts
+        } else {
+            info.rawInputOff = null
+        }
+
+        const elts = shapeElts(info.outputShape)
         if (!isInPlace(l))
             currIdx = currIdx == 0 ? 1 : 0
         info.outputOff = currIdx
@@ -480,12 +501,101 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
         const info = getLayerInfo(l)
         if (info.inputOff) info.inputOff = midOff
         if (info.outputOff) info.outputOff = midOff
+        if (info.rawInputOff) info.rawInputOff = midOff
     }
 
     const arenaSize = maxSize[0] + maxSize[1]
     modelInfo.arenaSize = arenaSize
 
     return modelInfo
+}
+
+function compilePadding(info: LayerInfo) {
+    const res: ir.Op[] = []
+
+    if (info.rawInputOff == null)
+        return res
+
+    const [_batch0, inpy, inpx, numch] = info.rawInputShape
+    const [_batch1, outy, outx, outch] = info.inputShape
+    assert(numch == outch)
+
+    const padx = outx - inpx
+    const x0 = padx >> 1
+    const x1 = padx - x0
+
+    const pady = outy - inpy
+    const y0 = pady >> 1
+    const y1 = pady - y0
+
+    const numZero = numFPRegs >> 1
+    const numData = numFPRegs - numZero
+    const dataReg = Reg.S0 + numZero
+
+    res.push(ir.load0(Reg.S0))
+    // this is slightly cheaper than loading zeros from memory
+    for (let i = 1; i < numZero; ++i)
+        res.push(ir.vadd(Reg.S0 + i, Reg.S0, Reg.S0))
+
+    res.push(ir.loadDataAddr(Reg.InputPtr, info.rawInputOff))
+    res.push(ir.loadDataAddr(Reg.OutputPtr, info.inputOff))
+
+    const topPad = y0 * outx + x0
+    const linePad = x1 + x0
+    const bottomPad = x1 + y1 * outx
+
+    res.push(...setZero(topPad))
+    res.push(ir.repeat(inpy - 1, () => ir.flatten(
+        copyOver(inpx),
+        setZero(linePad)
+    )))
+    res.push(...copyOver(inpx))
+    res.push(...setZero(bottomPad))
+
+    return res
+
+    function setZero(n: number) {
+        const res: ir.Op[] = []
+        n *= numch
+        const leftover = n % numZero
+        const reps = (n - leftover) / numZero
+        if (reps)
+            res.push(ir.repeat(reps, () => [
+                ir.store(Reg.OutputPtr, Reg.S0, numZero, true)
+            ]))
+        if (leftover)
+            res.push(ir.store(Reg.OutputPtr, Reg.S0, leftover, true))
+        return res
+    }
+
+    function copyOver(n: number) {
+        const res: ir.Op[] = []
+        n *= numch
+        const leftover = n % numData
+        const reps = (n - leftover) / numData
+        if (reps)
+            res.push(ir.repeat(reps, () => [
+                ir.load(Reg.InputPtr, dataReg, numData, true),
+                ir.store(Reg.OutputPtr, dataReg, numData, true)
+            ]))
+        if (leftover) {
+            res.push(
+                ir.load(Reg.InputPtr, dataReg, leftover, true),
+                ir.store(Reg.OutputPtr, dataReg, leftover, true))
+        }
+        return res
+    }
+}
+
+function optimizeWithComment(opcodes: ir.Op[]) {
+    const c0 = ir.numCycles(opcodes)
+    opcodes = ir.optimize(opcodes)
+    const c1 = ir.numCycles(opcodes)
+    const optRate = 100 * (c0 - c1) / c0
+    const optinfo = c0 ? `${c1} cycles (${optRate.toFixed(1)}% opt)` : "(no computation)"
+    if (c0)
+        opcodes.unshift(ir.comment(optinfo))
+    return { opcodes, optinfo }
 }
 
 export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
@@ -496,21 +606,20 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
     for (const l of m.layers) {
         const info = getLayerInfo(l)
 
+        if (info.rawInputOff != null) {
+            const tmp = optimizeWithComment(compilePadding(info))
+            ops.push(tmp.opcodes)
+        }
+
         const cinfo = compilers[l.getClassName()]
         if (cinfo) {
-            let tmp = cinfo.compile(info)
-            const c0 = ir.numCycles(tmp)
-            tmp = ir.optimize(tmp)
-            const c1 = ir.numCycles(tmp)
-            const optRate = 100 * (c0 - c1) / c0
-            const optinfo = c0 ? `${c1} cycles (${optRate.toFixed(1)}% opt)` : "(no computation)"
-            const shapeinfo = `data: ${shapeToString(info.inputShape)} => ${shapeToString(info.outputShape)}`
-            const meminfo = `mem: @${info.inputOff} -> @${info.outputOff}`
-            const infostr = `Layer: ${l.getClassName()}; ${optinfo} ${shapeinfo} ${meminfo}`
-            tmp.unshift(ir.comment(infostr))
+            const tmp = optimizeWithComment(cinfo.compile(info))
+            const shapeinfo = `data: ${shapeToString(info.inputShape)}@${info.inputOff} => ${shapeToString(info.outputShape)}@${info.outputOff}`
+            const infostr = `Layer: ${l.getClassName()}; ${shapeinfo}`
+            tmp.opcodes.unshift(ir.comment(infostr))
             if (opts.verbose)
-                console.log(infostr)
-            ops.push(tmp)
+                console.log(infostr + " " + tmp.optinfo)
+            ops.push(tmp.opcodes)
         } else
             console.log("unsupported layer: ", l.getClassName())
     }
