@@ -20,6 +20,7 @@ interface LayerInfo {
     layer: tf.layers.Layer;
     model: ir.ModelInfo;
     inputShape: tf.Shape;
+    paddedInputShape: tf.Shape;
     outputShape: tf.Shape;
     inputOff: number;
     outputOff: number;
@@ -50,9 +51,8 @@ function getLayerInfo(l: tf.layers.Layer) {
     return r
 }
 
-function validateConfig(layer: tf.layers.Layer) {
-    const config = layer.getConfig() as unknown as (tfi.Pooling2DLayerArgs | tfi.BaseConvLayerArgs)
-    const info = getLayerInfo(layer)
+function validateConfig(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as (tfi.Pooling2DLayerArgs | tfi.BaseConvLayerArgs)
 
     if (info.model.opts.verbose)
         console.log(info.inputShape, info.outputShape, config)
@@ -65,9 +65,8 @@ function validateConfig(layer: tf.layers.Layer) {
         unsupported("dtype: " + config.dtype)
 }
 
-function addActivation(res: ir.Op[], layer: tf.layers.Layer) {
-    const config = layer.getConfig() as unknown as tfi.DenseLayerArgs
-    const info = getLayerInfo(layer)
+function addActivation(res: ir.Op[], info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.DenseLayerArgs
     const numoutp = shapeElts(info.outputShape)
 
     if (config.activation == "linear")
@@ -83,15 +82,14 @@ function addActivation(res: ir.Op[], layer: tf.layers.Layer) {
         unsupported("activation: " + config.activation)
 }
 
-function compileConv2D(layer: tf.layers.Layer) {
-    const config = layer.getConfig() as unknown as tfi.ConvLayerArgs
-    const info = getLayerInfo(layer)
+function compileConv2D(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.ConvLayerArgs
     const memRegs = numFPRegs >> 1
     const flashRegs = numFPRegs >> 1
 
-    validateConfig(layer)
+    validateConfig(info)
 
-    const weights = layer.weights[0].read().arraySync() as number[][][][]
+    const weights = info.layer.weights[0].read().arraySync() as number[][][][]
 
     const kh = config.kernelSize[0]
     const kw = config.kernelSize[1]
@@ -128,7 +126,7 @@ function compileConv2D(layer: tf.layers.Layer) {
 
     const weightData = info.model.weights
     const weightsIdx = weightData.length
-    const bias = config.useBias ? layer.weights[1].read().arraySync() as number[] : null
+    const bias = config.useBias ? info.layer.weights[1].read().arraySync() as number[] : null
 
     const addParam = (v: number) => {
         assert(v != null)
@@ -211,16 +209,15 @@ function compileConv2D(layer: tf.layers.Layer) {
             return res
         })]
 
-    addActivation(res, layer)
+    addActivation(res, info)
 
     return res
 }
 
-function compileMaxPooling2D(layer: tf.layers.Layer) {
-    const config = layer.getConfig() as unknown as tfi.Pooling2DLayerArgs
-    const info = getLayerInfo(layer)
+function compileMaxPooling2D(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.Pooling2DLayerArgs
 
-    validateConfig(layer)
+    validateConfig(info)
 
     const kh = config.poolSize[0]
     const kw = config.poolSize[1]
@@ -292,9 +289,8 @@ function compileMaxPooling2D(layer: tf.layers.Layer) {
     ]
 }
 
-function compileDense(layer: tf.layers.Layer) {
-    const config = layer.getConfig() as unknown as tfi.DenseLayerArgs
-    const info = getLayerInfo(layer)
+function compileDense(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.DenseLayerArgs
 
     const maxChunk = (numFPRegs >> 1) - 2
     const memReg0 = Reg.S1
@@ -309,7 +305,7 @@ function compileDense(layer: tf.layers.Layer) {
     if (config.dtype && config.dtype != "float32")
         unsupported("dtype: " + config.dtype)
 
-    const weights = layer.weights[0].read().arraySync() as number[][]
+    const weights = info.layer.weights[0].read().arraySync() as number[][]
     //console.log(weights)
 
     const inpsize = info.inputShape[1]
@@ -319,7 +315,7 @@ function compileDense(layer: tf.layers.Layer) {
 
     const weightData = info.model.weights
     const weightsIdx = weightData.length
-    const bias = config.useBias ? layer.weights[1].read().arraySync() as number[] : null
+    const bias = config.useBias ? info.layer.weights[1].read().arraySync() as number[] : null
     //console.log(bias)
 
     const addParam = (v: number) => {
@@ -369,12 +365,12 @@ function compileDense(layer: tf.layers.Layer) {
             return res
         })]
 
-    addActivation(res, layer)
+    addActivation(res, info)
 
     return res
 }
 
-function noop(l: tf.layers.Layer): ir.Op[] {
+function noop(info: LayerInfo): ir.Op[] {
     return []
 }
 
@@ -387,9 +383,10 @@ export function shapeElts(shape: tf.Shape) {
 }
 
 interface LayerCompileInfo {
-    compile?: (l: tf.layers.Layer) => ir.Op[]
+    compile?: (info: LayerInfo) => ir.Op[]
     inPlace?: boolean
     testable?: boolean
+    computePaddedInputShape?: (info: LayerInfo) => number[]
 }
 
 function fixupCompileInfo(info: LayerCompileInfo) {
@@ -400,6 +397,8 @@ function fixupCompileInfo(info: LayerCompileInfo) {
             info.inPlace = true
         info.compile = noop
     }
+    if (!info.computePaddedInputShape)
+        info.computePaddedInputShape = info => info.inputShape.slice()
 }
 
 let inited = false
@@ -459,6 +458,10 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
             info.inputShape = inputShape
         }
         info.outputShape = l.computeOutputShape(info.inputShape) as tf.Shape
+        const comp = compilers[l.getClassName()]
+        if (comp) {
+            info.paddedInputShape = comp.computePaddedInputShape(info)
+        }
         const elts = shapeElts(info.outputShape)
         info.inputOff = currIdx
         if (!isInPlace(l))
@@ -495,7 +498,7 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
 
         const cinfo = compilers[l.getClassName()]
         if (cinfo) {
-            let tmp = cinfo.compile(l)
+            let tmp = cinfo.compile(info)
             const c0 = ir.numCycles(tmp)
             tmp = ir.optimize(tmp)
             const c1 = ir.numCycles(tmp)
