@@ -596,12 +596,14 @@ export async function* partialModels(m: tf.LayersModel, opts: Options) {
         lcfg.batch_input_shape = info.inputShape
         cfg.layers = [layerJson]
         const copy = await tf.loadLayersModel({ load: () => Promise.resolve(mod) })
+        console.log(`testing ${layer.getClassName()}: ${shapeToString(info.inputShape)} => ${shapeToString(info.outputShape)}...`)
         yield copy
         layerJson.config.batch_input_shape = info.inputShape
         // also test it without activation
         if (lcfg.activation) {
             lcfg.activation = null
             const withoutAct = await tf.loadLayersModel({ load: () => Promise.resolve(mod) })
+            console.log(`also with no activation...`)
             yield withoutAct
         }
     }

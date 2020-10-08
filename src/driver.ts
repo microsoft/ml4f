@@ -85,12 +85,10 @@ export async function compileModelAndFullValidate(m: tf.LayersModel, opts: Optio
 
     console.log("Validating partial models...")
     const iter = partialModels(m, opts)
-    let idx = 0
     while (true) {
         const m = (await iter.next()).value
         if (!m)
             break
-        console.log("Test", ++idx)
         for (const l of m.layers)
             setRandomWeights(l)
         compileAndTest(m, opts)
@@ -106,6 +104,8 @@ export function validateCompilation(cres: CompileResult) {
     const opts = cres.options
     const res = opts.testOutput
     const res2 = cres.execute(opts.testInput)
+    if (cres.options.verbose)
+        console.log("Test output", res2)
     let numerr = 0
     for (let i = 0; i < res2.length; ++i) {
         if (!isNear(res[i], res2[i])) {

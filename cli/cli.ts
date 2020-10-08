@@ -4,12 +4,12 @@ import * as U from '../src/util'
 import * as path from 'path'
 import * as child_process from 'child_process'
 import { program as commander } from "commander"
-import { compileModel, compileModelAndFullValidate, optionsWithTestData, validateCompilation } from '../src/main'
+import { compileModel, compileModelAndFullValidate, Options } from '../src/main'
 
 interface CmdOptions {
     debug?: boolean;
     output?: string;
-    noValidate?: boolean;
+    validate?: boolean;
 }
 
 let options: CmdOptions
@@ -129,8 +129,8 @@ async function processModelFile(modelFile: string) {
     const model = loadModel(modelFile)
     const m = await tf.loadLayersModel({ load: () => model })
 
-    const opts = optionsWithTestData(m, { verbose: options.debug })
-    const cres = options.noValidate ? compileModel(m, opts) : await compileModelAndFullValidate(m, opts)
+    let opts: Options = { verbose: options.debug }
+    const cres = !options.validate ? compileModel(m, opts) : await compileModelAndFullValidate(m, opts)
 
     write(".asm", cres.thumb)
     write(".js", cres.js)
@@ -142,8 +142,6 @@ async function processModelFile(modelFile: string) {
         console.log(`write ${fn} (${binbuf.length} bytes)`)
         fs.writeFileSync(fn, binbuf)
     }
-
-    validateCompilation(cres)
 }
 
 export async function mainCli() {
