@@ -8,6 +8,7 @@ export interface Options {
     testInput?: number[]
     testOutput?: number[]
     info?: string
+    tryHard?: boolean
 }
 
 export interface ModelInfo {

@@ -66,11 +66,42 @@ function isNear(a: number, b: number) {
 }
 
 export function optionsWithTestData(m: tf.LayersModel, opts: Options) {
-    const randomInput = randomTensor(m.inputs[0].shape)
-    const resTensor = m.predict(randomInput) as tf.Tensor
     opts = U.flatClone(opts)
-    opts.testInput = randomInput.flatten().arraySync()
-    opts.testOutput = resTensor.flatten().arraySync()
+    let count = 0
+    let maxMul = 0
+    while (true) {
+        const randomInput = randomTensor(m.inputs[0].shape)
+        const resTensor = m.predict(randomInput) as tf.Tensor
+        const res = resTensor.flatten().arraySync()
+        let sum = 0
+        let mul = 1
+        for (const r of res) {
+            sum += r
+            mul *= r
+        }
+
+        const isSoftmax = Math.abs(sum - 1) < 0.1
+        if (!isSoftmax) {
+            save()
+            break
+        }
+
+        if (mul > maxMul) {
+            maxMul = mul
+            save()
+        }
+
+        if (count++ > (opts.tryHard ? 1000 : 100) || maxMul > 0.1) {
+            if (!mul)
+                save()
+            break
+        }
+
+        function save() {
+            opts.testInput = randomInput.flatten().arraySync()
+            opts.testOutput = res
+        }
+    }
     return opts
 }
 
@@ -95,6 +126,8 @@ export async function compileModelAndFullValidate(m: tf.LayersModel, opts: Optio
     }
 
     console.log("Compiling full model...")
+
+    opts.tryHard = true
 
     // also test the top-level one again
     return compileAndTest(m, opts)
