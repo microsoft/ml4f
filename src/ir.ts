@@ -346,8 +346,9 @@ _header:
             else
                 write(`addw ${dst}, ${src}, #${num}`)
         } else {
-            loadConst("r1", num)
-            write(`adds ${dst}, ${src},r1`)
+            assert(src != dst)
+            loadConst(dst, num)
+            write(`adds ${dst}, ${src}, ${dst}`)
         }
     }
 
@@ -416,14 +417,20 @@ _header:
                             } else if (n == 2) {
                                 write(`adds r0,r0`)
                             } else {
-                                loadConst("r1", n)
-                                write(`muls r0, r1`)
+                                assert(dst != srcAlt)
+                                loadConst(dst, n)
+                                write(`muls r0, ${dst}`)
                             }
                         } else {
                             write(`muls r0, ${src}`)
                         }
                     } else {
-                        write(`lsls r0, ${src}, #2`)
+                        if (src[0] == '#') {
+                            const n = +src.slice(1)
+                            loadConst("r0", n << 2)
+                        } else {
+                            write(`lsls r0, ${src}, #2`)
+                        }
                     }
                     write(`adds ${dst}, ${srcAlt}, r0`)
                 }

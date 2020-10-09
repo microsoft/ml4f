@@ -38,6 +38,18 @@ const sampleModels: SMap<tf.layers.Layer[]> = {
             units: 5,
             activation: "softmax",
         })],
+    padding: [
+        tf.layers.inputLayer({
+            inputShape: [50,3,1]
+        }),
+        tf.layers.conv2d({
+            filters: 16,
+            kernelSize: 4,
+            strides: 1,
+            padding: "same",
+            activation: "relu"
+        })
+    ]
 }
 
 function sampleModel() {
