@@ -117,8 +117,8 @@ function paddingPool2D(info: LayerInfo) {
     for (let i = 1; i <= 2; ++i) {
         // TODO this may be wrong if config.poolSize != config.strides
         const tmp = info.outputShape[i] * config.strides[i - 1]
-        assert(tmp >= res[i])
-        res[i] = tmp
+        if (tmp > res[i])
+            res[i] = tmp
     }
 
     return res
