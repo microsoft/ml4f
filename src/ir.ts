@@ -8,7 +8,7 @@ export interface Options {
     testInput?: number[]
     testOutput?: number[]
     info?: string
-    tryHard?: boolean
+    includeTest?: boolean
 }
 
 export interface ModelInfo {
@@ -172,7 +172,7 @@ export function toThumb(modelInfo: ModelInfo, ops: Op[]) {
     const descWords = 2
     const usedFns: SMap<boolean> = {}
 
-    const hasTest = !!modelInfo.opts.testInput
+    const hasTest = !!modelInfo.opts.testInput && !!modelInfo.opts.includeTest
     let ind = ""
     const byteOffset = (n: number) => 4 * (n + descWords)
     const header = [

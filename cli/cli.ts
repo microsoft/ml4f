@@ -7,9 +7,10 @@ import { program as commander } from "commander"
 import { compileModel, compileModelAndFullValidate, Options } from '../src/main'
 
 interface CmdOptions {
-    debug?: boolean;
-    output?: string;
-    validate?: boolean;
+    debug?: boolean
+    output?: string
+    validate?: boolean
+    testData?: boolean
 }
 
 let options: CmdOptions
@@ -129,12 +130,18 @@ async function processModelFile(modelFile: string) {
     const model = loadModel(modelFile)
     const m = await tf.loadLayersModel({ load: () => model })
 
-    let opts: Options = { verbose: options.debug }
+    let opts: Options = {
+        verbose: options.debug,
+        includeTest: options.testData,
+    }
     const cres = !options.validate ? compileModel(m, opts) : await compileModelAndFullValidate(m, opts)
 
     write(".asm", cres.thumb)
     write(".js", cres.js)
     write(".bin", cres.machineCode)
+
+    console.log(cres.memInfo)
+    console.log(cres.timeInfo)
 
     function write(ext: string, buf: string | Uint8Array) {
         const fn = built("model" + ext)
@@ -152,6 +159,7 @@ export async function mainCli() {
         .version(pkg.version)
         .option("-d, --debug", "enable debugging")
         .option("-n, --no-validate", "don't validate resulting model")
+        .option("-t, --test-data", "include test data in binary model")
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .arguments("<model>")
         .parse(process.argv)

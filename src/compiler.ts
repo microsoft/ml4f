@@ -15,6 +15,8 @@ export interface CompileResult {
     thumb: string
     machineCode: Uint8Array
     options: Options
+    memInfo: string
+    timeInfo: string
 }
 
 interface LayerInfo {
@@ -696,7 +698,9 @@ ${ir.toJSs(modelInfo, flat)}
         js,
         thumb,
         machineCode: null,
-        options: opts
+        options: opts,
+        memInfo: null,
+        timeInfo: modelInfo.stats
     }
 
     return res

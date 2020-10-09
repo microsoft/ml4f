@@ -112,6 +112,8 @@ function logThumb(cres: CompileResult) {
     str += "// BUF: "
     for (const v of cres.machineCode) str += hex2(v)
     console.log(str)
+    console.log(cres.memInfo)
+    console.log(cres.timeInfo)
 }
 
 

@@ -91,7 +91,7 @@ export function optionsWithTestData(m: tf.LayersModel, opts: Options) {
             save()
         }
 
-        if (count++ > (opts.tryHard ? 1000 : 100) || maxMul > 0.1) {
+        if (count++ > (opts.includeTest ? 1000 : 100) || maxMul > 0.1) {
             if (!mul)
                 save()
             break
@@ -108,26 +108,28 @@ export function optionsWithTestData(m: tf.LayersModel, opts: Options) {
 export function compileModel(m: tf.LayersModel, opts: Options) {
     const cres = compileModelCore(m, opts)
     cres.machineCode = assemble(cres.thumb)
+    const st = getStatsFromBin(cres.machineCode)
+    cres.memInfo = st.info
     return cres
 }
 
 export async function compileModelAndFullValidate(m: tf.LayersModel, opts: Options) {
     assignLayerInfos(m, opts)
 
+    const optsPart = U.flatClone(opts)
+    optsPart.includeTest = false
     console.log("Validating partial models...")
-    const iter = partialModels(m, opts)
+    const iter = partialModels(m, optsPart)
     while (true) {
         const m = (await iter.next()).value
         if (!m)
             break
         for (const l of m.layers)
             setRandomWeights(l)
-        compileAndTest(m, opts)
+        compileAndTest(m, optsPart)
     }
 
     console.log("Compiling full model...")
-
-    opts.tryHard = true
 
     // also test the top-level one again
     return compileAndTest(m, opts)
@@ -165,5 +167,44 @@ export function compileAndTest(m: tf.LayersModel, options: Options) {
             compileModelCore(m, options)
         }
         throw e
+    }
+}
+
+function readU32(bin: Uint8Array, off: number) {
+    return (bin[off] | (bin[off + 1] << 8) | (bin[off + 2] << 16) | (bin[off + 3] << 24)) >>> 0
+}
+
+function readU32s(bin: Uint8Array) {
+    const res: number[] = []
+    for (let i = 0; i < bin.length; i += 4) {
+        res.push(readU32(bin, i))
+    }
+    return res
+}
+
+export function getStatsFromBin(bin: Uint8Array) {
+    let [magic0, magic1, hdSize, totalSize, weightsOff, testInpOff, testOutOff, arenaSize] = readU32s(bin.slice(0, 64))
+    if (magic0 != 0x30470f62)
+        return null
+    const modelSize = testInpOff || totalSize
+    const codeSize = weightsOff - hdSize
+    const codePerc = codeSize * 100 / modelSize
+    const testSize = totalSize - modelSize
+
+    function sz(n: number) {
+        return (n / 1024).toFixed(2) + "k"
+    }
+    const info =
+        `model: ${sz(modelSize)}; ` +
+        `code: ${sz(codeSize)} (${codePerc.toFixed(1)}%); ` +
+        `arena: ${sz(arenaSize)}; test ${sz(testSize)}`
+
+    return {
+        info,
+        modelSize,
+        codeSize,
+        testSize,
+        totalSize,
+        arenaSize
     }
 }
