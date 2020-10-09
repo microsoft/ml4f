@@ -53,6 +53,7 @@ float my_expf(float a) {
   x.i += (i << 23);
   // x.f = ldexpf(x.f, i);
   // printf("%x\n", x.i);
+  // printf("expf(%f) -> %f vs %f\n", a,x.f,expf(a));
   return x.f;
 }
 
@@ -80,7 +81,8 @@ void softmax(float *arr, unsigned len) {
 void _exit() {}
 
 int main() {
-float arr[]={1,2,3,1090};
+//float arr[]={1,2,3,1090};
+float arr[]={-3,0.5,0.7,0.4};
 softmax(arr,4);
 for (unsigned i = 0; i < sizeof(arr)/4; ++i)
    printf("%e\n", arr[i]);

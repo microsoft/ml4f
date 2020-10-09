@@ -41,7 +41,7 @@ expf_asm:
 	vfma.f32	s13, s15, s0
 	vfma.f32	s14, s13, s0
 	vmov	r2, s14	// int
-	add	r3, r2, r3, lsl #24
+	add	r3, r2, r3, lsl #23
 	vmov	s0, r3	// int
 	bx	lr
 .L9:
@@ -55,8 +55,8 @@ expf_asm:
 .L11:
 	.align	2
 .L10:
-	.word	3268542464
-	.word	1121058816
+	.word	3265921024
+	.word	1118699520
 	.word	1069066811
 	.word	1262485504
 	.word	3207688704
