@@ -465,6 +465,7 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
         outputShape: null,
         outputOffset: -1,
         arenaSize: -1,
+        minArenaSize: -1,
         opts,
         stats: ""
     }
@@ -472,6 +473,9 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
     let maxSize = [shapeElts(inputShape), 0]
     let currIdx = 0
     let prev: LayerInfo
+    let totalMax = maxSize[0]
+    const recordMax = (n: number) => totalMax = Math.max(n, totalMax)
+
     for (const l of m.layers) {
         const info = getLayerInfo(l)
         info.model = modelInfo
@@ -496,13 +500,19 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
             info.inputShape = paddedShape
             if (paddedElts > maxSize[currIdx])
                 maxSize[currIdx] = paddedElts
+            recordMax(paddedElts + shapeElts(info.rawInputShape))
         } else {
             info.rawInputOff = null
         }
 
         const elts = shapeElts(info.outputShape)
-        if (!isInPlace(l))
+        if (isInPlace(l)) {
+            recordMax(shapeElts(info.inputShape))
+            recordMax(shapeElts(info.outputShape))
+        } else {
+            recordMax(shapeElts(info.inputShape) + shapeElts(info.outputShape))
             currIdx = currIdx == 0 ? 1 : 0
+        }
         info.outputOff = currIdx
         if (elts > maxSize[currIdx])
             maxSize[currIdx] = elts
@@ -522,6 +532,12 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
 
     const arenaSize = maxSize[0] + maxSize[1]
     modelInfo.arenaSize = arenaSize
+    modelInfo.minArenaSize = totalMax
+
+    if (arenaSize > totalMax * 1.2) {
+        // TODO
+        console.log("possible arena shrink with wiser allocation: " + (arenaSize / totalMax).toFixed(3) + "x")
+    }
 
     return modelInfo
 }

@@ -14,6 +14,7 @@ export interface Options {
 export interface ModelInfo {
     weights: number[];
     arenaSize: number;
+    minArenaSize: number;
     inputShape: number[];
     outputShape: number[];
     outputOffset: number;
