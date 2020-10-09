@@ -6,7 +6,6 @@ import * as U from './util'
 
 import * as ir from "./ir"
 import { Reg } from "./ir"
-import { op } from '@tensorflow/tfjs'
 
 export type Options = ir.Options
 export interface CompileResult {

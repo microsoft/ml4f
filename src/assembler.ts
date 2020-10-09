@@ -1,3 +1,4 @@
+import { float16toUInt16 } from "./float16";
 import { ThumbProcessor } from "./thumb";
 import { assert, oops, endsWith, userError, mapMap } from "./util";
 
@@ -603,9 +604,20 @@ export class File {
             const v = parseFloat(w)
             if (isNaN(v))
                 this.directiveError("invalid .float")
-            const buf = new Float32Array(1)
-            buf[0] = v
-            const n = new Uint32Array(buf.buffer)[0]
+            const n = float32ToUInt32(v)
+            this.emitShort(n & 0xffff)
+            this.emitShort((n >> 16) & 0xffff)
+        })
+    }
+
+
+    private emitFloats16(words: string[]) {
+        words.slice(1).forEach(w => {
+            if (w == ",") return
+            const v = parseFloat(w)
+            if (isNaN(v))
+                this.directiveError("invalid .float16")
+            const n = float16toUInt16(v)
             this.emitShort(n & 0xffff)
             this.emitShort((n >> 16) & 0xffff)
         })
@@ -670,6 +682,9 @@ export class File {
                 break;
             case ".float":
                 this.emitFloats(words);
+                break;
+            case ".float16":
+                this.emitFloats16(words);
                 break;
             case ".hword":
             case ".short":
@@ -1415,4 +1430,10 @@ export function expect(ei: AbstractProcessor, disasm: string) {
         if (b.buf[i] != exp[i])
             oops("ASMTEST: wrong buf content at " + i + " , exp:" + tohex(exp[i]) + ", got: " + tohex(b.buf[i]))
     }
+}
+
+export function float32ToUInt32(v: number) {
+    const buf = new Float32Array(1)
+    buf[0] = v
+    return new Uint32Array(buf.buffer)[0]
 }
