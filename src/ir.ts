@@ -66,6 +66,7 @@ export interface Op {
     srcAlt?: Reg
     num?: number
     isDef?: boolean
+    is16?: boolean
     increment?: boolean
     body?: Op[]
     fname?: string
@@ -115,6 +116,11 @@ function addFloat16(mi: ModelInfo, v: number) {
         (u >> 0) & 0xff,
         (u >> 8) & 0xff,
     ])
+}
+
+export function alignWeights(mi: ModelInfo) {
+    while (mi.weightPtr & 3)
+        addParamBytes(mi, [0])
 }
 
 export function addWeight(mi: ModelInfo, v: number) {
@@ -674,6 +680,12 @@ export function loadWeightAddr(dst: Reg, idx: number): Op {
     }
 }
 
+export function relaxWeights(): Op {
+    const r = addPtr(Reg.KernelPtr, null, 0)
+    r.fname = "relax"
+    return r
+}
+
 export function loadDataAddr(dst: Reg, idx: number): Op {
     assert(idx >= 0)
     return {
@@ -710,6 +722,25 @@ export function load(dst: Reg, num: number, src: Reg, adv: boolean): Op {
         num: num,
         increment: adv
     }
+}
+
+export function load16(dst: Reg, num: number, src: Reg): Op {
+    return {
+        opcode: OpCode.load,
+        dst,
+        src,
+        num: num,
+        increment: true,
+        is16: true
+    }
+}
+
+export function loadWeight(mi: ModelInfo, dst: Reg, num: number) {
+    const src = Reg.KernelPtr
+    if (mi.opts.float16weights)
+        return load16(dst, num, src)
+    else
+        return load(dst, num, src, true)
 }
 
 export function store(dst: Reg, src: Reg, num: number, adv: boolean): Op {

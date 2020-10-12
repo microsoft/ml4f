@@ -168,6 +168,7 @@ function compileConv2D(info: LayerInfo) {
             for (let x = 0; x < kw; x++)
                 for (let c = 0; c < inpch; ++c)
                     ir.addWeight(mi, weights[y][x][c][f])
+        ir.alignWeights(mi)
     }
 
     const res = [
@@ -201,7 +202,7 @@ function compileConv2D(info: LayerInfo) {
                     chunk = kernSz - kernOff
                     if (chunk > flashRegs)
                         chunk = flashRegs
-                    res.push(ir.load(memRegs, chunk, Reg.KernelPtr, true))
+                    res.push(ir.loadWeight(mi, memRegs, chunk))
 
                     res.push(ir.loadDataAddr(Reg.InputPtr, info.inputOff + kernOff))
                     res.push(ir.addPtr(Reg.InputPtr, kline, inpw * inpch))
@@ -230,6 +231,8 @@ function compileConv2D(info: LayerInfo) {
 
                 return res
             }))
+
+            res.push(ir.relaxWeights())
 
             return res
         })]
@@ -348,6 +351,7 @@ function compileDense(info: LayerInfo) {
             ir.addBias(mi, bias[f])
         for (let i = 0; i < inpsize; ++i)
             ir.addWeight(mi, weights[i][f])
+        ir.alignWeights(mi)
     }
 
     const res = [
@@ -366,7 +370,7 @@ function compileDense(info: LayerInfo) {
 
             const addChunk = (len: number) => ir.flatten(
                 ir.load(memReg0, len, Reg.InputPtr, true),
-                ir.load(flashReg0, len, Reg.KernelPtr, true),
+                ir.loadWeight(mi, flashReg0, len),
                 U.range(len + 1).map(i => [
                     i < len ? ir.vmul(memReg0 + i, memReg0 + i, flashReg0 + i) : null,
                     i >= 1 ? ir.vadd(Reg.S0, Reg.S0, memReg0 + i - 1) : null
@@ -381,6 +385,7 @@ function compileDense(info: LayerInfo) {
                 U.pushRange(res, addChunk(left))
 
             res.push(ir.store(Reg.OutputPtr, Reg.S0, 1, true))
+            res.push(ir.relaxWeights())
 
             return res
         })]

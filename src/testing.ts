@@ -5,7 +5,7 @@ import { compileAndTest, setRandomWeights } from './driver';
 
 function sampleModel() {
     const model = tf.sequential();
-    const classifier = false
+    const classifier = true
 
     if (!classifier) {
         model.add(tf.layers.conv2d({
