@@ -666,28 +666,15 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
 
     const js = `
 ${ir.stringifyComment(modelInfo.stats)}
-(weights => {
+((weights, mkRuntime) => {
     "use strict";
     const weightOff = ${modelInfo.arenaSize}
     const dataOff = 0
     const mem = new Float32Array(weightOff + ${ir.weightOffset(modelInfo)})
     mem.fill(1000.2342)
     new Uint8Array(mem.buffer).set(weights, weightOff << 2)
-    function softmax(ptr, len) {
-        let max = mem[ptr]
-        for (let i = 1; i < len; ++i)
-            max = Math.max(mem[ptr + i], max)
-        let sum = 0
-        for (let i = 0; i < len; ++i)
-            sum += (mem[ptr + i] = Math.exp(mem[ptr + i] - max))
-        for (let i = 0; i < len; ++i)
-            mem[ptr + i] /= sum
-    }
-    function f32(v) {
-        const arr = new Float32Array(1)
-        arr[0] = v
-        return arr[0]
-    }
+    const rt = mkRuntime(mem)
+    const { softmax, f32 } = rt
     return (inputs => {
         if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).rawInputShape)})
             throw new Error("invalid input size")
@@ -705,7 +692,7 @@ ${ir.toJSs(modelInfo, flat)}
 
     const thumb = ir.toThumb(modelInfo, flat)
     const res: CompileResult = {
-        execute: (eval(js))(modelInfo.weightBuffer),
+        execute: (eval(js))(modelInfo.weightBuffer, mkRuntime),
         js,
         thumb,
         machineCode: null,
@@ -715,6 +702,26 @@ ${ir.toJSs(modelInfo, flat)}
     }
 
     return res
+}
+
+function mkRuntime(mem: Float32Array) {
+    return {
+        softmax: (ptr: number, len: number) => {
+            let max = mem[ptr]
+            for (let i = 1; i < len; ++i)
+                max = Math.max(mem[ptr + i], max)
+            let sum = 0
+            for (let i = 0; i < len; ++i)
+                sum += (mem[ptr + i] = Math.exp(mem[ptr + i] - max))
+            for (let i = 0; i < len; ++i)
+                mem[ptr + i] /= sum
+        },
+        f32: (v: number) => {
+            const arr = new Float32Array(1)
+            arr[0] = v
+            return arr[0]
+        }
+    }
 }
 
 /**
