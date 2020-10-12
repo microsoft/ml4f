@@ -3,6 +3,8 @@
 import { asmDeps, asmFns } from './library'
 import * as U from './util'
 
+const unrollLimit = 10
+
 export interface Options {
     verbose?: boolean
     testInput?: number[]
@@ -72,7 +74,19 @@ function assert(cond: boolean, msg = "assertion failed") {
     }
 }
 
-const unrollLimit = 10
+export function addWeight(mi: ModelInfo, v: number) {
+    assert(v != null && !isNaN(v))
+    mi.weights.push(v)
+}
+
+export function addBias(mi: ModelInfo, v: number) {
+    assert(v != null && !isNaN(v))
+    mi.weights.push(v)
+}
+
+export function weightOffset(mi: ModelInfo) {
+    return mi.weights.length
+}
 
 export function stringifyComment(msg: string) {
     if (!msg) return ""
@@ -219,6 +233,7 @@ _header:
 
     let lblid = 0
 
+    // TODO use high registers for i/o/k ? these are used with 32 bit instructions anyways
     regAlloc[Reg.InputPtr] = 1
     regAlloc[Reg.OutputPtr] = 2
     regAlloc[Reg.KernelPtr] = 3

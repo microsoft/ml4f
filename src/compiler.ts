@@ -157,25 +157,17 @@ function compileConv2D(info: LayerInfo) {
     assert(weights[0][0][0].length == config.filters, "F")
     assert(outch == config.filters, "FF")
 
-    const weightData = info.model.weights
-    const weightsIdx = weightData.length
+    const mi = info.model
+    const weightsIdx = ir.weightOffset(mi)
     const bias = config.useBias ? info.layer.weights[1].read().arraySync() as number[] : null
 
-    const addParam = (v: number) => {
-        assert(v != null)
-        weightData.push(v)
-    }
-
-    let sz = 0
     for (let f = 0; f < config.filters; f++) {
         if (bias)
-            addParam(bias[f])
+            ir.addBias(mi, bias[f])
         for (let y = 0; y < kh; y++)
             for (let x = 0; x < kw; x++)
                 for (let c = 0; c < inpch; ++c)
-                    addParam(weights[y][x][c][f])
-        if (sz == 0)
-            sz = weightData.length - weightsIdx
+                    ir.addWeight(mi, weights[y][x][c][f])
     }
 
     const res = [
@@ -346,21 +338,16 @@ function compileDense(info: LayerInfo) {
     assert(weights.length == inpsize, "IH")
     assert(weights[0].length == config.units, "UN")
 
-    const weightData = info.model.weights
-    const weightsIdx = weightData.length
+    const mi = info.model
+    const weightsIdx = ir.weightOffset(mi)
     const bias = config.useBias ? info.layer.weights[1].read().arraySync() as number[] : null
     //console.log(bias)
 
-    const addParam = (v: number) => {
-        assert(v != null)
-        weightData.push(v)
-    }
-
     for (let f = 0; f < config.units; f++) {
         if (bias)
-            addParam(bias[f])
+            ir.addBias(mi, bias[f])
         for (let i = 0; i < inpsize; ++i)
-            addParam(weights[i][f])
+            ir.addWeight(mi, weights[i][f])
     }
 
     const res = [
