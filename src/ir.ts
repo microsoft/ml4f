@@ -1,5 +1,7 @@
 ///<reference path="pxtpackage.d.ts" />
 
+import { float32ToUInt32 } from './assembler'
+import { float16toUInt16 } from './float16'
 import { asmDeps, asmFns } from './library'
 import * as U from './util'
 
@@ -11,17 +13,20 @@ export interface Options {
     testOutput?: number[]
     info?: string
     includeTest?: boolean
+    float16weights?: boolean
 }
 
 export interface ModelInfo {
-    weights: number[];
-    arenaSize: number;
-    minArenaSize: number;
-    inputShape: number[];
-    outputShape: number[];
-    outputOffset: number;
-    opts: Options;
-    stats: string;
+    weightBuffer: Uint8Array
+    weightPtr: number
+    weightAsm: string
+    arenaSize: number
+    minArenaSize: number
+    inputShape: number[]
+    outputShape: number[]
+    outputOffset: number
+    opts: Options
+    stats: string
 }
 
 export enum OpCode {
@@ -74,18 +79,58 @@ function assert(cond: boolean, msg = "assertion failed") {
     }
 }
 
-export function addWeight(mi: ModelInfo, v: number) {
+function addParamBytes(mi: ModelInfo, bytes: number[]) {
+    assert((mi.weightPtr & (bytes.length - 1)) == 0)
+    if (!mi.weightBuffer)
+        mi.weightBuffer = new Uint8Array(128)
+
+    const dstlen = mi.weightPtr + bytes.length
+    if (dstlen + 3 > mi.weightBuffer.length) {
+        const buf = new Uint8Array(dstlen * 2)
+        buf.set(mi.weightBuffer)
+        mi.weightBuffer = buf
+    }
+
+    mi.weightBuffer.set(bytes, mi.weightPtr)
+    mi.weightPtr = dstlen
+}
+
+function addFloat32(mi: ModelInfo, v: number) {
     assert(v != null && !isNaN(v))
-    mi.weights.push(v)
+    mi.weightAsm += `.float ${v}\n`
+    const u = float32ToUInt32(v)
+    addParamBytes(mi, [
+        (u >> 0) & 0xff,
+        (u >> 8) & 0xff,
+        (u >> 16) & 0xff,
+        (u >> 24) & 0xff,
+    ])
+}
+
+function addFloat16(mi: ModelInfo, v: number) {
+    assert(v != null && !isNaN(v))
+    mi.weightAsm += `.float16 ${v}\n`
+    const u = float16toUInt16(v)
+    addParamBytes(mi, [
+        (u >> 0) & 0xff,
+        (u >> 8) & 0xff,
+    ])
+}
+
+export function addWeight(mi: ModelInfo, v: number) {
+    if (mi.opts.float16weights)
+        addFloat16(mi, v)
+    else
+        addFloat32(mi, v)
 }
 
 export function addBias(mi: ModelInfo, v: number) {
-    assert(v != null && !isNaN(v))
-    mi.weights.push(v)
+    addFloat32(mi, v)
 }
 
 export function weightOffset(mi: ModelInfo) {
-    return mi.weights.length
+    assert((mi.weightPtr & 3) == 0)
+    return mi.weightPtr >> 2
 }
 
 export function stringifyComment(msg: string) {
@@ -260,7 +305,9 @@ _header:
     }
 
     write(".balign 4")
-    writeArray("_weights", modelInfo.weights)
+
+    //const u32 = new Uint32Array(modelInfo.weightBuffer.buffer)
+    write(`_weights:\n${modelInfo.weightAsm}`)
 
     if (hasTest) {
         writeArray("_testInput", modelInfo.opts.testInput)

@@ -447,7 +447,9 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
     const inputShape = m.layers[0].batchInputShape
 
     const modelInfo: ir.ModelInfo = {
-        weights: [],
+        weightPtr: 0,
+        weightBuffer: new Uint8Array(128),
+        weightAsm: "",
         inputShape,
         outputShape: null,
         outputOffset: -1,
@@ -655,15 +657,17 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
     if (opts.verbose)
         console.log(modelInfo.stats)
 
+    modelInfo.weightBuffer = modelInfo.weightBuffer.slice(0, modelInfo.weightPtr)
+
     const js = `
 ${ir.stringifyComment(modelInfo.stats)}
 (weights => {
     "use strict";
     const weightOff = ${modelInfo.arenaSize}
     const dataOff = 0
-    const mem = new Float32Array(weightOff + ${modelInfo.weights.length})
+    const mem = new Float32Array(weightOff + ${ir.weightOffset(modelInfo)})
     mem.fill(1000.2342)
-    mem.set(weights, weightOff)
+    new Uint8Array(mem.buffer).set(weights, weightOff << 2)
     function softmax(ptr, len) {
         let max = mem[ptr]
         for (let i = 1; i < len; ++i)
@@ -696,7 +700,7 @@ ${ir.toJSs(modelInfo, flat)}
 
     const thumb = ir.toThumb(modelInfo, flat)
     const res: CompileResult = {
-        execute: (eval(js))(modelInfo.weights),
+        execute: (eval(js))(modelInfo.weightBuffer),
         js,
         thumb,
         machineCode: null,
