@@ -1,4 +1,4 @@
-import { float16toUInt16 } from "./float16";
+import { float16toUInt16, float32ToUInt32 } from "./float16";
 import { ThumbProcessor } from "./thumb";
 import { assert, oops, endsWith, userError, mapMap } from "./util";
 
@@ -1430,10 +1430,4 @@ export function expect(ei: AbstractProcessor, disasm: string) {
         if (b.buf[i] != exp[i])
             oops("ASMTEST: wrong buf content at " + i + " , exp:" + tohex(exp[i]) + ", got: " + tohex(b.buf[i]))
     }
-}
-
-export function float32ToUInt32(v: number) {
-    const buf = new Float32Array(1)
-    buf[0] = v
-    return new Uint32Array(buf.buffer)[0]
 }

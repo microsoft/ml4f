@@ -185,9 +185,10 @@ export function sampleModel(id: string) {
 }
 
 export async function testAllModels(opts: Options) {
+    const t0 = Date.now()
     for (const m of allSampleModels()) {
         console.log(`***\n*** ${m.name}\n***`)
         await compileModelAndFullValidate(m, opts)
     }
-    console.log("\n*** All OK\n")
+    console.log(`\n*** All OK (${Date.now() - t0}ms)\n`)
 }

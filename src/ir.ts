@@ -1,7 +1,6 @@
 ///<reference path="pxtpackage.d.ts" />
 
-import { float32ToUInt32 } from './assembler'
-import { float16toUInt16 } from './float16'
+import { float16toUInt16, float32ToUInt32 } from './float16'
 import { asmDeps, asmFns } from './library'
 import * as U from './util'
 

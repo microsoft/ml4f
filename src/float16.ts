@@ -1,7 +1,5 @@
 /// based on: Fast Half Float Conversions, Jeroen van der Zijp, link: http://www.fox-toolkit.org/ftp/fasthalffloatconversion.pdf
 
-import { float32ToUInt32 } from "./assembler";
-
 const basetable = new Uint16Array(512);
 const shifttable = new Uint8Array(512);
 let inited = false
@@ -37,6 +35,12 @@ function init() {
             shifttable[i | 0x100] = 13;
         }
     }
+}
+
+export function float32ToUInt32(v: number) {
+    const buf = new Float32Array(1)
+    buf[0] = v
+    return new Uint32Array(buf.buffer)[0]
 }
 
 export function float16toUInt16(v: number) {
