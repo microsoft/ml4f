@@ -59,6 +59,13 @@ export enum Reg {
     Zero = 500,
 }
 
+enum F16Mode {
+    Off = 0,
+    On = 1, // before opt
+    Even = 2, // after opt
+    Odd = 3, // after opt
+}
+
 export interface Op {
     opcode: OpCode
     dst?: Reg
@@ -66,7 +73,7 @@ export interface Op {
     srcAlt?: Reg
     num?: number
     isDef?: boolean
-    is16?: boolean
+    f16Mode?: F16Mode
     increment?: boolean
     body?: Op[]
     fname?: string
@@ -376,6 +383,7 @@ _header:
     }
 
     function oops(msg: string) {
+        debugger
         throw new Error("internal thumb error: " + msg)
     }
 
@@ -511,6 +519,7 @@ _header:
                     write(`vmov ${dst}, #${op.num}e+0`)
                 break
             case OpCode.load:
+                assert(op.f16Mode != F16Mode.On)
                 write(`vldm ${src}${incr}, ${range(op)}`)
                 break
             case OpCode.store:
@@ -731,7 +740,7 @@ export function load16(dst: Reg, num: number, src: Reg): Op {
         src,
         num: num,
         increment: true,
-        is16: true
+        f16Mode: F16Mode.On,
     }
 }
 
@@ -821,6 +830,87 @@ export function flatten(...args: (Op | Op[] | Op[][])[]) {
     return res
 }
 
+function isOddF16(ops: Op[]) {
+    let cnt = 0
+    for (const op of ops) {
+        if (op.opcode == OpCode.load && op.f16Mode)
+            cnt += op.num
+        if (op.opcode == OpCode.addPtr && op.fname == "relax")
+            cnt = (cnt + 1) & ~1
+    }
+    return !!(cnt & 1)
+}
+
+export function fixupAndMarkF16(ops: Op[]) {
+    function loop(ops: Op[], odd = false) {
+        let cnt = odd ? 1 : 0
+        const isOdd = () => !!(cnt & 1)
+        const res: Op[] = []
+        for (let op of ops) {
+            op = cloneOp(op)
+
+            if (op.opcode == OpCode.repeat) {
+                if (op.num == 0)
+                    continue
+                const odd0 = isOdd()
+                const body0 = op.body
+                const r = loop(body0, odd0)
+                op.body = r.ops
+                if (r.odd != odd0) {
+                    assert(!op.isDef)
+                    if (op.num == 1) {
+                        U.pushRange(res, r.ops)
+                        cnt++ // swap oddity
+                    } else {
+                        const leftover = op.num & 1
+                        op.num >>= 1
+                        const r1 = loop(body0, r.odd)
+                        assert(r1.odd == odd0)
+                        op.body = r.ops.concat(r1.ops)
+                        res.push(op)
+                        if (leftover) {
+                            const r2 = loop(body0, odd0)
+                            U.pushRange(res, r2.ops)
+                            cnt++
+                        }
+                    }
+                } else {
+                    res.push(op)
+                }
+                continue
+            }
+
+            res.push(op)
+
+            if (op.opcode == OpCode.load && op.f16Mode) {
+                assert(op.f16Mode == F16Mode.On)
+                op.f16Mode = isOdd() ? F16Mode.Odd : F16Mode.Even
+                cnt += op.num
+            }
+            if (op.opcode == OpCode.addPtr && op.fname == "relax")
+                cnt = (cnt + 1) & ~1
+        }
+        return { ops: res, odd: !!(cnt & 1) }
+    }
+
+    return loop(ops).ops
+}
+
+function cloneOp(op: Op): Op {
+    return {
+        opcode: op.opcode,
+        dst: op.dst,
+        src: op.src,
+        srcAlt: op.srcAlt,
+        isDef: op.isDef,
+        f16Mode: op.f16Mode,
+        increment: op.increment,
+        num: op.num,
+        body: op.body,
+        fname: op.fname
+    }
+}
+
 export function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
     const repl = (r: Reg) => {
         if (!r) return r
@@ -831,17 +921,10 @@ export function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
 
     const res: Op[] = []
     for (let op of ops) {
-        op = {
-            opcode: op.opcode,
-            dst: repl(op.dst),
-            src: repl(op.src),
-            srcAlt: repl(op.srcAlt),
-            isDef: op.isDef,
-            increment: op.increment,
-            num: op.num,
-            body: op.body,
-            fname: op.fname
-        }
+        op = cloneOp(op)
+        op.dst = repl(op.dst)
+        op.src = repl(op.src)
+        op.srcAlt = repl(op.srcAlt)
         switch (op.opcode) {
             case OpCode.repeat:
                 if (op.num == 0) { }
@@ -849,6 +932,7 @@ export function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
                     replMap[op.dst] = Reg.Zero
                     U.pushRange(res, optimize(op.body, replMap))
                 } else {
+                    assert(!isOddF16(op.body))
                     op.body = optimize(op.body, replMap)
 
                     const stripLoop = op.num * op.body.length < unrollLimit * 2
@@ -857,6 +941,7 @@ export function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
                     if (stripLoop) {
                         for (let i = 0; i < op.num; ++i) {
                             replMap[op.dst] = Reg.Zero + i
+                            // need to run optimize() again due to new replacement
                             U.pushRange(res, optimize(op.body, replMap))
                         }
                     } else if (canUnroll) {

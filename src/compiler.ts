@@ -650,7 +650,7 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
             console.log("unsupported layer: ", l.getClassName())
     }
 
-    const flat = ir.flatten(ops)
+    const flat = ir.fixupAndMarkF16(ir.flatten(ops))
 
     const lastInfo = getLayerInfo(m.layers[m.layers.length - 1])
     modelInfo.outputOffset = lastInfo.outputOff
