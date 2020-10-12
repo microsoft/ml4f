@@ -2,6 +2,7 @@ import * as tf from '@tensorflow/tfjs'
 import * as U from './util'
 import { CompileResult, Options } from './compiler';
 import { compileAndTest, compileModelAndFullValidate, setRandomWeights } from './driver';
+import { testFloatConv } from './float16';
 
 
 function randomModel() {
@@ -185,6 +186,8 @@ export function sampleModel(id: string) {
 }
 
 export async function testAllModels(opts: Options) {
+    testFloatConv()
+    
     const t0 = Date.now()
     for (const m of allSampleModels()) {
         console.log(`***\n*** ${m.name}\n***`)

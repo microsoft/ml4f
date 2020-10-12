@@ -2,6 +2,11 @@
 
 const basetable = new Uint16Array(512);
 const shifttable = new Uint8Array(512);
+
+const mantissatable = new Uint32Array(2048);
+const offsettable = new Uint16Array(64);
+const exponenttable = new Uint32Array(64);
+
 let inited = false
 
 function init() {
@@ -35,6 +40,37 @@ function init() {
             shifttable[i | 0x100] = 13;
         }
     }
+
+    for (let i = 1; i < 2048; ++i) {
+        if (i < 1024)
+            mantissatable[i] = convertmantissa(i)
+        else
+            mantissatable[i] = 0x38000000 + ((i - 1024) << 13)
+    }
+
+    exponenttable[32] = 0x80000000
+    exponenttable[31] = 0x47800000
+    exponenttable[63] = 0xC7800000
+    for (let i = 1; i <= 30; ++i)
+        exponenttable[i] = i << 23
+    for (let i = 33; i <= 62; ++i)
+        exponenttable[i] = 0x80000000 + (i - 32) << 23
+
+    for (let i = 1; i < offsettable.length; ++i)
+        offsettable[i] = 1024
+    offsettable[32] = 0
+
+    function convertmantissa(i: number) {
+        let m = i << 13; // Zero pad mantissa bits
+        let e = 0; // Zero exponent
+        while (!(m & 0x00800000)) { // While not normalized
+            e -= 0x00800000; // Decrement exponent (1<<23)
+            m <<= 1; // Shift mantissa
+        }
+        m &= ~0x00800000; // Clear leading 1 bit
+        e += 0x38800000; // Adjust bias ((127-14)<<23)
+        return (m | e) >>> 0; // Return combined number
+    }
 }
 
 export function float32ToUInt32(v: number) {
@@ -47,4 +83,31 @@ export function float16toUInt16(v: number) {
     const f = float32ToUInt32(v)
     if (!inited) init()
     return basetable[(f >> 23) & 0x1ff] | ((f & 0x007fffff) >> shifttable[(f >> 23) & 0x1ff])
+}
+
+export function float16AsUintToFloat(h: number) {
+    const tmp = mantissatable[offsettable[h >> 10] + (h & 0x3ff)] + exponenttable[h >> 10]
+    const buf = new Uint32Array(1)
+    buf[0] = tmp
+    return new Float32Array(buf.buffer)[0]
+}
+
+export function testFloatConv() {
+    for (let i = 0; i < 30000; ++i) {
+        test(i)
+        test(-i)
+        test(1 / i)
+        test(-1 / i)
+        test(1 / (i * 100))
+        test(-1 / (i * 100))
+    }
+
+    function test(v: number) {
+        const u = float16toUInt16(v)
+        const v2 = float16AsUintToFloat(u)
+        const d = v == 0 ? 100000 * Math.abs(v - v2) : Math.abs(v - v2) / v
+        if (d > 0.002) {
+            throw new Error(`fail: ${v} -> ${u} -> ${v2} (d=${d})`)
+        }
+    }
 }
