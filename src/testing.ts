@@ -1,77 +1,7 @@
 import * as tf from '@tensorflow/tfjs'
 import * as U from './util'
 import { CompileResult, Options } from './compiler';
-import { compileAndTest, setRandomWeights } from './driver';
-
-function sampleModel() {
-    const model = tf.sequential();
-    const classifier = true
-
-    if (!classifier) {
-        model.add(tf.layers.conv2d({
-            inputShape: [50, 3, 1],
-            kernelSize: [4, 4],
-            filters: 16,
-            strides: [1, 1],
-            padding: 'same',
-            activation: 'relu',
-            kernelInitializer: 'varianceScaling'
-        }));
-    } else {
-        model.add(tf.layers.conv2d({
-            inputShape: [50, 3, 1],
-            kernelSize: [4, 3],
-            filters: 16,
-            strides: [1, 1],
-            padding: 'valid',
-            activation: 'relu',
-            kernelInitializer: 'varianceScaling'
-        }));
-
-        model.add(tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }));
-        model.add(tf.layers.dropout({ rate: 0.1 }));
-
-        model.add(tf.layers.conv2d({
-            kernelSize: [2, 1],
-            filters: 16,
-            strides: 1,
-            activation: 'relu',
-            kernelInitializer: 'varianceScaling'
-        }));
-        //model.add(tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }));
-        model.add(tf.layers.dropout({ rate: 0.1 }));
-
-        model.add(tf.layers.conv2d({
-            kernelSize: [2, 1],
-            filters: 16,
-            strides: 1,
-            activation: 'relu',
-            kernelInitializer: 'varianceScaling'
-        }));
-        model.add(tf.layers.dropout({ rate: 0.1 }));
-
-        model.add(tf.layers.flatten());
-
-        model.add(tf.layers.dense({
-            units: 4,
-            kernelInitializer: 'varianceScaling',
-            activation: 'softmax'
-        }));
-    }
-
-    const optimizer = tf.train.adam();
-    model.compile({
-        optimizer: optimizer,
-        loss: 'categoricalCrossentropy',
-        metrics: ['accuracy'],
-    });
-
-    // make sure weights are deterministic
-    for (const l of model.layers)
-        setRandomWeights(l)
-
-    return model;
-}
+import { compileAndTest, compileModelAndFullValidate, setRandomWeights } from './driver';
 
 
 function randomModel() {
@@ -101,7 +31,8 @@ function randomModel() {
     for (const l of model.layers)
         setRandomWeights(l)
 
-    return { model, desc }
+    model.name = desc
+    return model
 }
 
 function logThumb(cres: CompileResult) {
@@ -122,16 +53,141 @@ export async function runBrowser() {
     const t0 = Date.now()
     U.seedRandom(220)
     // const m = await tf.loadLayersModel("./models/gestures.tfjsmodel.json")
-    const sample = sampleModel()
+    const sample = sampleModel("tfjsGest")
     const opts: Options = { verbose: true }
     logThumb(compileAndTest(sample, opts))
 
-    for (let i = 0; i < 0; ++i) {
-        const { model, desc } = randomModel()
-        opts.info = desc
-        console.log(desc)
-        compileAndTest(model, opts)
-    }
+    await testAllModels({ verbose: false })
 
     console.log(Date.now() - t0 + "ms")
+}
+
+function getSampleModels(): SMap<tf.layers.Layer[]> {
+    return {
+        id: [tf.layers.inputLayer({
+            inputShape: [10, 3, 1]
+        })],
+        conv2d: [tf.layers.conv2d({
+            inputShape: [50, 3, 1],
+            kernelSize: [4, 4],
+            filters: 16,
+            strides: [1, 1],
+            padding: 'same',
+            activation: 'relu',
+            kernelInitializer: 'varianceScaling'
+        })],
+        dense: [
+            tf.layers.flatten({
+                inputShape: [10, 3, 1],
+            }),
+            tf.layers.dense({
+                units: 5,
+                activation: "softmax",
+            })],
+        padding: [
+            tf.layers.inputLayer({
+                inputShape: [50, 3, 1]
+            }),
+            tf.layers.conv2d({
+                filters: 16,
+                kernelSize: 4,
+                strides: 1,
+                padding: "same",
+                activation: "relu"
+            })
+        ],
+        dspDense: [
+            tf.layers.inputLayer({ inputShape: [33] }),
+            tf.layers.dense({ units: 20, activation: "relu" }),
+            tf.layers.dense({ units: 10, activation: "relu" }),
+            tf.layers.dense({ units: 3, activation: "softmax" }),
+        ],
+        noDsp: [
+            tf.layers.inputLayer({ inputShape: [150] }),
+            tf.layers.reshape({ targetShape: [50, 3, 1] }),
+            tf.layers.conv2d({ filters: 16, kernelSize: 4, strides: 1, padding: "same", activation: "relu" }),
+            tf.layers.maxPooling2d({ poolSize: 2, strides: 2, padding: "same" }),
+            tf.layers.dropout({ rate: 0.1 }),
+            tf.layers.conv2d({ filters: 16, kernelSize: 2, strides: 1, padding: "same", activation: "relu" }),
+            tf.layers.maxPooling2d({ poolSize: 2, strides: 2, padding: "same" }),
+            tf.layers.flatten(),
+            tf.layers.dense({ units: 30, activation: "relu" }),
+            tf.layers.dense({ units: 3, activation: "softmax" }),
+        ],
+        tfjsGest: [
+            tf.layers.conv2d({
+                inputShape: [50, 3, 1],
+                kernelSize: [4, 3],
+                filters: 16,
+                strides: [1, 1],
+                padding: 'valid',
+                activation: 'relu',
+                kernelInitializer: 'varianceScaling'
+            }),
+            tf.layers.maxPooling2d({ poolSize: [2, 1], strides: [2, 1] }),
+            tf.layers.dropout({ rate: 0.1 }),
+            tf.layers.conv2d({
+                kernelSize: [2, 1],
+                filters: 16,
+                strides: 1,
+                activation: 'relu',
+                kernelInitializer: 'varianceScaling'
+            }),
+            tf.layers.dropout({ rate: 0.1 }),
+            tf.layers.conv2d({
+                kernelSize: [2, 1],
+                filters: 16,
+                strides: 1,
+                activation: 'relu',
+                kernelInitializer: 'varianceScaling'
+            }),
+            tf.layers.dropout({ rate: 0.1 }),
+            tf.layers.flatten(),
+            tf.layers.dense({
+                units: 4,
+                kernelInitializer: 'varianceScaling',
+                activation: 'softmax'
+            })
+        ]
+    }
+}
+
+let _models: SMap<tf.layers.Layer[]>
+
+export function allSampleModels() {
+    if (!_models) _models = getSampleModels()
+    return Object.keys(_models).map(sampleModel)
+}
+
+export function sampleModel(id: string) {
+    const model = tf.sequential();
+    model.name = id
+
+    if (!_models) _models = getSampleModels()
+
+    const layers = _models[id]
+    if (!layers) {
+        let msg = `no such model ${id}; options:\n`
+        for (const name of Object.keys(_models)) {
+            msg += `- ${name}: ${_models[name].length} layer(s)\n`
+        }
+        throw new Error(msg)
+    }
+
+    for (const l of layers)
+        model.add(l);
+
+    // make sure weights are deterministic
+    for (const l of model.layers)
+        setRandomWeights(l)
+
+    return model;
+}
+
+export async function testAllModels(opts: Options) {
+    for (const m of allSampleModels()) {
+        console.log(`***\n*** ${m.name}\n***`)
+        await compileModelAndFullValidate(m, opts)
+    }
+    console.log("\n*** All OK\n")
 }

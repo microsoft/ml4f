@@ -3,9 +3,10 @@ import * as fs from 'fs'
 import * as U from '../src/util'
 import * as path from 'path'
 import * as child_process from 'child_process'
-import { program as commander } from "commander"
-import { compileModel, compileModelAndFullValidate, setRandomWeights } from '../src/driver'
+import { option, program as commander } from "commander"
+import { compileModel, compileModelAndFullValidate, optionsWithTestData, setRandomWeights } from '../src/driver'
 import { Options } from '../src/compiler'
+import { sampleModel, testAllModels } from '../src/main'
 
 interface CmdOptions {
     debug?: boolean
@@ -13,66 +14,10 @@ interface CmdOptions {
     validate?: boolean
     testData?: boolean
     sampleModel?: string
+    testAll?: boolean
 }
 
 let options: CmdOptions
-
-const sampleModels: SMap<tf.layers.Layer[]> = {
-    conv2d: [tf.layers.conv2d({
-        inputShape: [50, 3, 1],
-        kernelSize: [4, 4],
-        filters: 16,
-        strides: [1, 1],
-        padding: 'same',
-        activation: 'relu',
-        kernelInitializer: 'varianceScaling'
-    })],
-    id: [tf.layers.inputLayer({
-        inputShape: [10, 3, 1]
-    })],
-    dense: [
-        tf.layers.flatten({
-            inputShape: [10, 3, 1],
-        }),
-        tf.layers.dense({
-            units: 5,
-            activation: "softmax",
-        })],
-    padding: [
-        tf.layers.inputLayer({
-            inputShape: [50,3,1]
-        }),
-        tf.layers.conv2d({
-            filters: 16,
-            kernelSize: 4,
-            strides: 1,
-            padding: "same",
-            activation: "relu"
-        })
-    ]
-}
-
-function sampleModel() {
-    const model = tf.sequential();
-
-    const layers = sampleModels[options.sampleModel]
-    if (!layers) {
-        console.log(`no such model ${options.sampleModel}; options:`)
-        for (const name of Object.keys(sampleModels)) {
-            console.log(`- ${name}: ${sampleModels[name].length} layer(s)`)
-        }
-        process.exit(1)
-    }
-
-    for (const l of layers)
-        model.add(l);
-
-    // make sure weights are deterministic
-    for (const l of model.layers)
-        setRandomWeights(l)
-
-    return model;
-}
 
 function mkdirP(thePath: string) {
     if (thePath == "." || !thePath) return;
@@ -189,7 +134,7 @@ async function processModelFile(modelFile: string) {
 
     let m: tf.LayersModel
     if (options.sampleModel) {
-        m = sampleModel()
+        m = sampleModel(options.sampleModel)
     } else {
         const model = loadModel(modelFile)
         m = await tf.loadLayersModel({ load: () => model })
@@ -225,6 +170,7 @@ export async function mainCli() {
         .option("-d, --debug", "enable debugging")
         .option("-n, --no-validate", "don't validate resulting model")
         .option("-t, --test-data", "include test data in binary model")
+        .option("-T, --test-all", "test all included sample models")
         .option("-s, --sample-model <name>", "use an included sample model")
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .arguments("<model>")
@@ -233,6 +179,11 @@ export async function mainCli() {
     options = commander as CmdOptions
 
     if (!options.output) options.output = "built"
+
+    if (options.testAll) {
+        await testAllModels({ verbose: options.debug })
+        process.exit(0)
+    }
 
     if (!options.sampleModel && commander.args.length != 1) {
         console.error("exactly one model argument expected")

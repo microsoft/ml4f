@@ -166,6 +166,7 @@ export function compileAndTest(m: tf.LayersModel, options: Options) {
             options.verbose = true
             compileModelCore(m, options)
         }
+        console.log("Failing model: ", m.name)
         throw e
     }
 }
