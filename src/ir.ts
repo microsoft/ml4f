@@ -10,6 +10,7 @@ export interface Options {
     verbose?: boolean
     testInput?: number[]
     testOutput?: number[]
+    testOutputFromJS?: boolean
     info?: string
     includeTest?: boolean
     float16weights?: boolean

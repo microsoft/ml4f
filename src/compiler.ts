@@ -701,9 +701,23 @@ ${ir.toJSs(modelInfo, flat)}
 })
 `
 
-    const thumb = ir.toThumb(modelInfo, flat)
+    const execute = (eval(js))(modelInfo.weightBuffer, mkRuntime)
+    let thumb = ""
+
+    if (opts.includeTest && opts.testOutput && opts.testOutputFromJS) {
+        // If requested, embed the output from JS code as reference in Thumb code
+        // This is important for float16 - the JS and Thumb should be equivalent
+        // but the TF.JS may be further out, as it only does float32
+        const prev = opts.testOutput
+        opts.testOutput = execute(opts.testInput)
+        thumb = ir.toThumb(modelInfo, flat)
+        opts.testOutput = prev
+    } else {
+        thumb = ir.toThumb(modelInfo, flat)
+    }
+
     const res: CompileResult = {
-        execute: (eval(js))(modelInfo.weightBuffer, mkRuntime),
+        execute: execute,
         js,
         thumb,
         machineCode: null,
