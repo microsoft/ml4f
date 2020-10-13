@@ -17,6 +17,7 @@ interface CmdOptions {
     sampleModel?: string
     testAll?: boolean
     optimize?: boolean
+    float16?: boolean
 }
 
 let options: CmdOptions
@@ -26,6 +27,7 @@ function getCompileOptions(): Options {
         optimize: options.optimize,
         verbose: options.debug,
         includeTest: options.testData,
+        float16weights: options.float16,
     }
 }
 
@@ -177,6 +179,7 @@ export async function mainCli() {
         .option("-d, --debug", "enable debugging")
         .option("-n, --no-validate", "don't validate resulting model")
         .option("-g, --no-optimize", "don't optimize IR")
+        .option("-h, --float16", "use float16 weights")
         .option("-t, --test-data", "include test data in binary model")
         .option("-T, --test-all", "test all included sample models")
         .option("-s, --sample-model <name>", "use an included sample model")
