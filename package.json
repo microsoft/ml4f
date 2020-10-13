@@ -4,6 +4,7 @@
   "description": "",
   "scripts": {
     "build": "node node_modules/typescript/bin/tsc",
+    "test": "node ml4f -T",
     "watch-cli": "node node_modules/typescript/bin/tsc --watch",
     "watch": "node node_modules/rollup/dist/bin/rollup -c rollup.config.ts -w"
   },
