@@ -17,15 +17,10 @@ jobs:
         uses: actions/setup-node@v1
         with:
           node-version: ${{ matrix.node-version }}
-      - name: Cache npm and makecode
-        uses: actions/cache@v2
+      - uses: actions/cache@v2
         with:
-          path: |
-            ~/.npm
-          key: ${{ runner.os }}
-      - name: npm install
-        run: |
-          npm install
-      - run: npm run build
-      - run: npm run test
-
+          path: '**/node_modules'
+          key: ${{ runner.os }}-modules-${{ hashFiles('**/yarn.lock') }}
+      - run: yarn install
+      - run: yarn build
+      - run: yarn test
