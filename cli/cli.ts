@@ -7,6 +7,7 @@ import { option, program as commander } from "commander"
 import { compileModel, compileModelAndFullValidate, optionsWithTestData, setRandomWeights } from '../src/driver'
 import { Options } from '../src/compiler'
 import { sampleModel, testAllModels } from '../src/main'
+import { testFloatConv } from '../src/float16'
 
 interface CmdOptions {
     debug?: boolean
@@ -188,6 +189,7 @@ export async function mainCli() {
     if (!options.output) options.output = "built"
 
     if (options.testAll) {
+        testFloatConv()
         const opts = getCompileOptions()
         opts.includeTest = false
         await testAllModels(opts)
