@@ -131,7 +131,7 @@ function addFloat16(mi: ModelInfo, v: number) {
 export function alignWeights(mi: ModelInfo) {
     while (mi.weightPtr & 3)
         addParamBytes(mi, [0])
-    mi.weightAsm += ".align 4\n"
+    mi.weightAsm += ".balign 4\n"
 }
 
 export function addWeight(mi: ModelInfo, v: number) {

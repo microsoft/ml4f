@@ -619,7 +619,6 @@ export class File {
                 this.directiveError("invalid .float16")
             const n = float16toUInt16(v)
             this.emitShort(n & 0xffff)
-            this.emitShort((n >> 16) & 0xffff)
         })
     }
 
