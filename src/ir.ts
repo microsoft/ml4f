@@ -596,6 +596,8 @@ function stringify1(op: Op): string {
 
     switch (op.opcode) {
         case OpCode.comment:
+            if (isBreak(op))
+                return "debugger\n"
             return stringifyComment(op.fname) + "\n"
         case OpCode.repeat:
             return `for (let ${dst} = 0; ${dst} < ${op.num}; ${dst}++) {\n${indent(stringify(op.body))}}\n`
@@ -714,6 +716,11 @@ export function relaxWeights(): Op {
     const r = addPtr(Reg.KernelPtr, null, 0)
     r.fname = "relax"
     return r
+}
+
+
+export function breakpoint(): Op {
+    return comment("BREAK")
 }
 
 export function loadDataAddr(dst: Reg, idx: number): Op {
@@ -862,6 +869,10 @@ export function flatten(...args: (Op | Op[] | Op[][])[]) {
 
 function isRelax(op: Op) {
     return (op.opcode == OpCode.addPtr && op.fname == "relax")
+}
+
+function isBreak(op: Op) {
+    return (op.opcode == OpCode.comment && op.fname == "BREAK")
 }
 
 function isOddF16(ops: Op[]) {
