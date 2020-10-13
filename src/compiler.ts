@@ -621,7 +621,8 @@ function optimizeWithComment(opts: Options, opcodes: ir.Op[]) {
     if (opts.float16weights)
         opcodes = ir.fixupAndMarkF16(opcodes)
     const c0 = ir.numCycles(opcodes)
-    opcodes = ir.optimize(opcodes)
+    if (opts.optimize)
+        opcodes = ir.optimize(opcodes)
     const c1 = ir.numCycles(opcodes)
     const optRate = 100 * (c0 - c1) / c0
     const optinfo = c0 ? `${c1} cycles (${optRate.toFixed(1)}% opt)` : "(no computation)"
@@ -632,6 +633,9 @@ function optimizeWithComment(opts: Options, opcodes: ir.Op[]) {
 
 export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
     const modelInfo = assignLayerInfos(m, opts)
+
+    if (opts.optimize === undefined)
+        opts.optimize = true
 
     const ops: ir.Op[][] = []
 

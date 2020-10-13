@@ -13,6 +13,7 @@ export interface Options {
     info?: string
     includeTest?: boolean
     float16weights?: boolean
+    optimize?: boolean
 }
 
 export interface ModelInfo {

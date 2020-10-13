@@ -15,9 +15,18 @@ interface CmdOptions {
     testData?: boolean
     sampleModel?: string
     testAll?: boolean
+    optimize?: boolean
 }
 
 let options: CmdOptions
+
+function getCompileOptions(): Options {
+    return {
+        optimize: options.optimize,
+        verbose: options.debug,
+        includeTest: options.testData,
+    }
+}
 
 function mkdirP(thePath: string) {
     if (thePath == "." || !thePath) return;
@@ -140,10 +149,7 @@ async function processModelFile(modelFile: string) {
         m = await tf.loadLayersModel({ load: () => model })
     }
 
-    let opts: Options = {
-        verbose: options.debug,
-        includeTest: options.testData,
-    }
+    const opts = getCompileOptions()
     const cres = !options.validate ? compileModel(m, opts) : await compileModelAndFullValidate(m, opts)
 
     write(".asm", cres.thumb)
@@ -169,6 +175,7 @@ export async function mainCli() {
         .version(pkg.version)
         .option("-d, --debug", "enable debugging")
         .option("-n, --no-validate", "don't validate resulting model")
+        .option("-g, --no-optimize", "don't optimize IR")
         .option("-t, --test-data", "include test data in binary model")
         .option("-T, --test-all", "test all included sample models")
         .option("-s, --sample-model <name>", "use an included sample model")
@@ -181,7 +188,9 @@ export async function mainCli() {
     if (!options.output) options.output = "built"
 
     if (options.testAll) {
-        await testAllModels({ verbose: options.debug })
+        const opts = getCompileOptions()
+        opts.includeTest = false
+        await testAllModels(opts)
         process.exit(0)
     }
 
