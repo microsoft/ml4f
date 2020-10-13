@@ -105,9 +105,9 @@ export function testFloatConv() {
     function test(v: number) {
         const u = float16toUInt16(v)
         const v2 = float16AsUintToFloat(u)
-        const d = v == 0 ? 100000 * Math.abs(v - v2) : Math.abs(v - v2) / v
+        const d = Math.min(10000 * Math.abs(v - v2), Math.abs(v - v2) / v)
         if (d > 0.002) {
-            throw new Error(`fail: ${v} -> ${u} -> ${v2} (d=${d})`)
+            throw new Error(`fail: ${v} -> ${u} -> ${v2} (dd=${v - v2} d=${d})`)
         }
     }
 }

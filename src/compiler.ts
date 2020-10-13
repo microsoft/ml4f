@@ -6,6 +6,7 @@ import * as U from './util'
 
 import * as ir from "./ir"
 import { Reg } from "./ir"
+import { float16AsUintToFloat } from './float16'
 
 export type Options = ir.Options
 export interface CompileResult {
@@ -650,7 +651,9 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
             console.log("unsupported layer: ", l.getClassName())
     }
 
-    const flat = ir.fixupAndMarkF16(ir.flatten(ops))
+    let flat = ir.flatten(ops)
+    if (opts.float16weights)
+        flat = ir.fixupAndMarkF16(flat)
 
     const lastInfo = getLayerInfo(m.layers[m.layers.length - 1])
     modelInfo.outputOffset = lastInfo.outputOff
@@ -673,6 +676,7 @@ ${ir.stringifyComment(modelInfo.stats)}
     const mem = new Float32Array(weightOff + ${ir.weightOffset(modelInfo)})
     mem.fill(1000.2342)
     new Uint8Array(mem.buffer).set(weights, weightOff << 2)
+    const memU32 = new Uint32Array(mem.buffer)
     const rt = mkRuntime(mem)
     const { softmax, f32 } = rt
     return (inputs => {
@@ -720,7 +724,11 @@ function mkRuntime(mem: Float32Array) {
             const arr = new Float32Array(1)
             arr[0] = v
             return arr[0]
-        }
+        },
+        vcvtb_f32_f16: (v: number) =>
+            float16AsUintToFloat(v & 0xffff),
+        vcvtt_f32_f16: (v: number) =>
+            float16AsUintToFloat((v >> 16) & 0xffff),
     }
 }
 

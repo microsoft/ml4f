@@ -40,6 +40,7 @@ export enum OpCode {
     vmul,
     vmax,
     vadd,
+    vcvt,
     relu,
     fcall,
 }
@@ -56,6 +57,7 @@ export enum Reg {
     Index0 = 300,
     Tmp0 = 400,
     Zero = 500,
+    One = 501,
 }
 
 enum F16Mode {
@@ -224,6 +226,9 @@ export function numCycles(ops: Op[]): number {
                 else
                     cycles += 1
                 prevDst = op.dst
+                break
+            case OpCode.vcvt:
+                cycles += 1
                 break
             case OpCode.fcall:
                 if (op.fname == "softmax")
@@ -540,6 +545,9 @@ _header:
             case OpCode.vadd:
                 write(`vadd.f32 ${dst}, ${src}, ${srcAlt}`)
                 break
+            case OpCode.vcvt:
+                write(`${op.fname} ${dst}, ${src}`)
+                break
             case OpCode.vmax:
                 assert(dst != srcAlt)
                 if (src != dst)
@@ -586,7 +594,7 @@ function toJS(modelInfo: ModelInfo, op: Op): string {
             let dp = op.dst + 0
             if (op.increment) {
                 for (let i = 0; i < op.num; ++i)
-                    r += `${reg(dp++)} = mem[${src}++]\n`
+                    r += `${reg(dp++)} = ${op.fname || "mem"}[${src}++]\n`
             } else {
                 for (let i = 0; i < op.num; ++i)
                     r += `${reg(dp++)} = mem[${src} + ${i}]\n`
@@ -614,7 +622,9 @@ function toJS(modelInfo: ModelInfo, op: Op): string {
         case OpCode.vmax:
             return `${dst} = Math.max(${src}, ${srcAlt})\n`
         case OpCode.fcall:
-            return `${op.fname}(${dst}, ${op.num})`
+            return `${op.fname}(${dst}, ${op.num})\n`
+        case OpCode.vcvt:
+            return `${dst} = rt.${op.fname.replace(/\./g, "_")}(${src})\n`
         default:
             throw new Error("bad op " + op.opcode)
     }
@@ -798,6 +808,15 @@ export function vadd(dst: Reg, a: Reg, b: Reg) {
     }
 }
 
+export function vcvt(fname: string, dst: Reg, src: Reg) {
+    return {
+        opcode: OpCode.vcvt,
+        dst,
+        src,
+        fname
+    }
+}
+
 export function fcall(name: string, dst: Reg, len: number): Op {
     return {
         opcode: OpCode.fcall,
@@ -829,12 +848,16 @@ export function flatten(...args: (Op | Op[] | Op[][])[]) {
     return res
 }
 
+function isRelax(op: Op) {
+    return (op.opcode == OpCode.addPtr && op.fname == "relax")
+}
+
 function isOddF16(ops: Op[]) {
     let cnt = 0
     for (const op of ops) {
         if (op.opcode == OpCode.load && op.f16Mode)
             cnt += op.num
-        if (op.opcode == OpCode.addPtr && op.fname == "relax")
+        if (isRelax(op))
             cnt = (cnt + 1) & ~1
     }
     return !!(cnt & 1)
@@ -886,13 +909,52 @@ export function fixupAndMarkF16(ops: Op[]) {
                 op.f16Mode = isOdd() ? F16Mode.Odd : F16Mode.Even
                 cnt += op.num
             }
-            if (op.opcode == OpCode.addPtr && op.fname == "relax")
+            if (isRelax(op))
                 cnt = (cnt + 1) & ~1
         }
         return { ops: res, odd: !!(cnt & 1) }
     }
 
-    return loop(ops).ops
+    function expand(ops: Op[]) {
+        const res: Op[] = []
+        for (let op of ops) {
+            if (op.opcode == OpCode.repeat) {
+                assert(!isOddF16(op.body))
+                op.body = expand(op.body)
+                res.push(op)
+            } else if (op.opcode == OpCode.load && op.f16Mode) {
+                let numLoad = 0
+                let isBottom = false
+                if (op.f16Mode == F16Mode.Odd) {
+                    numLoad = (op.num >> 1) + 1
+                    res.push(addPtr(op.src, Reg.One, -1))
+                    if (!(op.num & 1))
+                        isBottom = true
+                } else if (op.f16Mode == F16Mode.Even) {
+                    numLoad = (op.num + 1) >> 1
+                    if (op.num & 1)
+                        isBottom = true
+                } else {
+                    assert(false)
+                }
+                const ld = load(op.dst, numLoad, op.src, true)
+                ld.fname = "memU32"
+                res.push(ld)
+                let srcreg = op.dst + numLoad - 1
+                for (let i = op.num - 1; i >= 0; --i) {
+                    res.push(vcvt(isBottom ? "vcvtb.f32.f16" : "vcvtt.f32.f16", op.dst + i, srcreg))
+                    if (isBottom)
+                        srcreg--
+                    isBottom = !isBottom
+                }
+            } else {
+                res.push(op)
+            }
+        }
+        return res
+    }
+
+    return expand(loop(ops).ops)
 }
 
 function cloneOp(op: Op): Op {
@@ -931,7 +993,6 @@ export function optimize(ops: Op[], replMap: SMap<Reg> = {}): Op[] {
                     replMap[op.dst] = Reg.Zero
                     U.pushRange(res, optimize(op.body, replMap))
                 } else {
-                    assert(!isOddF16(op.body))
                     op.body = optimize(op.body, replMap)
 
                     const stripLoop = op.num * op.body.length < unrollLimit * 2
