@@ -165,11 +165,12 @@ function compileConv2D(info: LayerInfo) {
     for (let f = 0; f < config.filters; f++) {
         if (bias)
             ir.addBias(mi, bias[f])
-        for (let y = 0; y < kh; y++)
+        for (let y = 0; y < kh; y++) {
             for (let x = 0; x < kw; x++)
                 for (let c = 0; c < inpch; ++c)
                     ir.addWeight(mi, weights[y][x][c][f])
-        ir.alignWeights(mi)
+            ir.alignWeights(mi)
+        }
     }
 
     const res = [
@@ -229,6 +230,8 @@ function compileConv2D(info: LayerInfo) {
                         )),
                         ir.addPtr(Reg.InputPtr, null, hSkip - outw * wSkip)]))
                 }
+
+                res.push(ir.relaxWeights())
 
                 return res
             }))
@@ -614,7 +617,9 @@ function compilePadding(info: LayerInfo) {
     }
 }
 
-function optimizeWithComment(opcodes: ir.Op[]) {
+function optimizeWithComment(opts: Options, opcodes: ir.Op[]) {
+    if (opts.float16weights)
+        opcodes = ir.fixupAndMarkF16(opcodes)
     const c0 = ir.numCycles(opcodes)
     opcodes = ir.optimize(opcodes)
     const c1 = ir.numCycles(opcodes)
@@ -634,13 +639,13 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
         const info = getLayerInfo(l)
 
         if (info.rawInputOff != null) {
-            const tmp = optimizeWithComment(compilePadding(info))
+            const tmp = optimizeWithComment(opts, compilePadding(info))
             ops.push(tmp.opcodes)
         }
 
         const cinfo = compilers[l.getClassName()]
         if (cinfo) {
-            const tmp = optimizeWithComment(cinfo.compile(info))
+            const tmp = optimizeWithComment(opts, cinfo.compile(info))
             const shapeinfo = `data: ${shapeToString(info.inputShape)}@${info.inputOff} => ${shapeToString(info.outputShape)}@${info.outputOff}`
             const infostr = `Layer: ${l.getClassName()}; ${shapeinfo}`
             tmp.opcodes.unshift(ir.comment(infostr))
@@ -652,8 +657,6 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
     }
 
     let flat = ir.flatten(ops)
-    if (opts.float16weights)
-        flat = ir.fixupAndMarkF16(flat)
 
     const lastInfo = getLayerInfo(m.layers[m.layers.length - 1])
     modelInfo.outputOffset = lastInfo.outputOff

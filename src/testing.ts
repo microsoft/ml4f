@@ -55,10 +55,11 @@ export async function runBrowser() {
     U.seedRandom(220)
     // const m = await tf.loadLayersModel("./models/gestures.tfjsmodel.json")
     const sample = sampleModel("tfjsGest")
-    const opts: Options = { verbose: true }
+    const float16weights = true
+    const opts: Options = { verbose: true, float16weights }
     logThumb(compileAndTest(sample, opts))
 
-    await testAllModels({ verbose: false })
+    await testAllModels({ verbose: false, float16weights })
 
     console.log(Date.now() - t0 + "ms")
 }
@@ -187,7 +188,7 @@ export function sampleModel(id: string) {
 
 export async function testAllModels(opts: Options) {
     testFloatConv()
-    
+
     const t0 = Date.now()
     for (const m of allSampleModels()) {
         console.log(`***\n*** ${m.name}\n***`)
