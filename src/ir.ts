@@ -570,15 +570,34 @@ _header:
 }
 
 function toJS(modelInfo: ModelInfo, op: Op): string {
-    const dst = op.dst == null ? null : reg(op.dst)
-    const src = op.src == null ? null : reg(op.src)
-    const srcAlt = op.srcAlt == null ? null : reg(op.srcAlt)
+    let r = ""
+    if (op.opcode == OpCode.repeat) {
+        const dst = regName(op.dst)
+        r = `for (let ${dst} = 0; ${dst} < ${op.num}; ${dst}++) {\n${indent(toJSs(modelInfo, op.body))}}\n`
+    } else {
+        r = stringify1(op)
+    }
+
+    if (r.indexOf("???") >= 0)
+        U.oops("invalid register in: " + r)
+
+    return r
+}
+
+export function stringify(op: Op[]): string {
+    return op.map(stringify1).join("")
+}
+
+function stringify1(op: Op): string {
+    const dst = op.dst == null ? null : regName(op.dst)
+    const src = op.src == null ? null : regName(op.src)
+    const srcAlt = op.srcAlt == null ? null : regName(op.srcAlt)
 
     switch (op.opcode) {
         case OpCode.comment:
             return stringifyComment(op.fname) + "\n"
         case OpCode.repeat:
-            return `for (let ${dst} = 0; ${dst} < ${op.num}; ${dst}++) {\n${indent(toJSs(modelInfo, op.body))}}\n`
+            return `for (let ${dst} = 0; ${dst} < ${op.num}; ${dst}++) {\n${indent(stringify(op.body))}}\n`
         case OpCode.loadWeightAddr:
             return `${dst} = weightOff + ${op.num}\n`
         case OpCode.loadDataAddr:
@@ -594,10 +613,10 @@ function toJS(modelInfo: ModelInfo, op: Op): string {
             let dp = op.dst + 0
             if (op.increment) {
                 for (let i = 0; i < op.num; ++i)
-                    r += `${reg(dp++)} = ${op.fname || "mem"}[${src}++]\n`
+                    r += `${regName(dp++)} = ${op.fname || "mem"}[${src}++]\n`
             } else {
                 for (let i = 0; i < op.num; ++i)
-                    r += `${reg(dp++)} = mem[${src} + ${i}]\n`
+                    r += `${regName(dp++)} = mem[${src} + ${i}]\n`
             }
             return r
         }
@@ -606,10 +625,10 @@ function toJS(modelInfo: ModelInfo, op: Op): string {
             let dp = op.dst + 0
             if (op.increment) {
                 for (let i = 0; i < op.num; ++i)
-                    r += `mem[${src}++] = ${reg(dp++)}\n`
+                    r += `mem[${src}++] = ${regName(dp++)}\n`
             } else {
                 for (let i = 0; i < op.num; ++i)
-                    r += `mem[${src} + ${i}] = ${reg(dp++)}\n`
+                    r += `mem[${src} + ${i}] = ${regName(dp++)}\n`
             }
             return r
         }
@@ -627,14 +646,6 @@ function toJS(modelInfo: ModelInfo, op: Op): string {
             return `${dst} = rt.${op.fname.replace(/\./g, "_")}(${src})\n`
         default:
             throw new Error("bad op " + op.opcode)
-    }
-
-
-    function reg(r: Reg) {
-        const res = regName(r)
-        if (res[0] === "?")
-            assert(false, "bad reg " + r)
-        return res
     }
 
 }
@@ -879,7 +890,10 @@ export function fixupAndMarkF16(ops: Op[]) {
                 const r = loop(body0, odd0)
                 op.body = r.ops
                 if (r.odd != odd0) {
-                    assert(!op.isDef)
+                    if (op.isDef) {
+                        console.log(stringify([op]))
+                        assert(false)
+                    }
                     if (op.num == 1) {
                         U.pushRange(res, r.ops)
                         cnt++ // swap oddity
