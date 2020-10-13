@@ -5,6 +5,9 @@ import * as U from './util'
 import { assignLayerInfos, compileModelCore, CompileResult, partialModels, shapeElts } from './compiler';
 import { Options } from './ir';
 
+const epsF32 = 0.00002
+const epsF16 = 0.002
+
 function mkProcessorFile() {
     const b = new assembler.File(new ThumbProcessor())
 
@@ -55,8 +58,7 @@ export function setRandomWeights(l: tf.layers.Layer) {
     }
 }
 
-const eps = 0.00002
-function isNear(a: number, b: number) {
+function isNear(a: number, b: number, eps: number) {
     const diff = Math.abs(a - b)
     if (diff < eps)
         return true
@@ -143,7 +145,7 @@ export function validateCompilation(cres: CompileResult) {
         console.log("Test output", res2)
     let numerr = 0
     for (let i = 0; i < res2.length; ++i) {
-        if (!isNear(res[i], res2[i])) {
+        if (!isNear(res[i], res2[i], opts.float16weights ? epsF16 : epsF32)) {
             console.log(`at ${i} ${res[i]} - ${res2[i]} = ${res[i] - res2[i]}`)
             numerr++
             if (numerr > 5) break
@@ -154,18 +156,20 @@ export function validateCompilation(cres: CompileResult) {
 }
 
 export function compileAndTest(m: tf.LayersModel, options: Options) {
+    let cres: CompileResult
     try {
         options = optionsWithTestData(m, options)
-        const cres = compileModel(m, options)
+        cres = compileModel(m, options)
         validateCompilation(cres)
         return cres
     } catch (e) {
         if (options.info)
             console.log(options.info)
-        if (!options.verbose) {
+        if (!cres || !options.verbose) {
             options.verbose = true
-            compileModelCore(m, options)
+            cres = compileModelCore(m, options)
         }
+        console.log(cres.js)
         console.log("Failing model: ", m.name)
         throw e
     }
