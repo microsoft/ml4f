@@ -54,7 +54,7 @@ function init() {
     for (let i = 1; i <= 30; ++i)
         exponenttable[i] = i << 23
     for (let i = 33; i <= 62; ++i)
-        exponenttable[i] = 0x80000000 + (i - 32) << 23
+        exponenttable[i] = 0x80000000 + ((i - 32) << 23)
 
     for (let i = 1; i < offsettable.length; ++i)
         offsettable[i] = 1024
@@ -86,6 +86,7 @@ export function float16toUInt16(v: number) {
 }
 
 export function float16AsUintToFloat(h: number) {
+    if (!inited) init()
     const tmp = mantissatable[offsettable[h >> 10] + (h & 0x3ff)] + exponenttable[h >> 10]
     const buf = new Uint32Array(1)
     buf[0] = tmp
@@ -103,9 +104,9 @@ export function testFloatConv() {
     }
 
     function test(v: number) {
-        const u = float16toUInt16(v)
+        const u = float16toUInt16(v) & 0xffff
         const v2 = float16AsUintToFloat(u)
-        const d = Math.min(10000 * Math.abs(v - v2), Math.abs(v - v2) / v)
+        const d = Math.min(10000 * Math.abs(v - v2), Math.abs((v - v2) / v))
         if (d > 0.002) {
             throw new Error(`fail: ${v} -> ${u} -> ${v2} (dd=${v - v2} d=${d})`)
         }
