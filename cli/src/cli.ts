@@ -5,6 +5,7 @@ import * as child_process from 'child_process'
 import { program as commander } from "commander"
 import {
     compileModel, compileModelAndFullValidate,
+    evalModel,
     Options, sampleModel, testAllModels,
     testFloatConv
 } from '../..'
@@ -18,6 +19,7 @@ interface CmdOptions {
     testAll?: boolean
     optimize?: boolean
     float16?: boolean
+    eval?: string
 }
 
 let options: CmdOptions
@@ -160,19 +162,28 @@ async function processModelFile(modelFile: string) {
     write(".js", cres.js)
     write(".bin", cres.machineCode)
 
+    if (options.eval) {
+        const ev = evalModel(cres, JSON.parse(fs.readFileSync(options.eval, "utf8")))
+        console.log(`\n*** ${built("model.bin")}\n${ev}`)
+    }
+
     console.log(cres.memInfo)
     console.log(cres.timeInfo)
 
     function write(ext: string, buf: string | Uint8Array) {
         const fn = built("model" + ext)
         const binbuf = typeof buf == "string" ? Buffer.from(buf, "utf8") : buf
-        console.log(`write ${fn} (${binbuf.length} bytes)`)
+        if (!options.eval)
+            console.log(`write ${fn} (${binbuf.length} bytes)`)
         fs.writeFileSync(fn, binbuf)
     }
 }
 
 export async function mainCli() {
     // require('@tensorflow/tfjs-node');
+
+    // shut up warning
+    (tf.backend() as any).firstUse = false;
 
     const pkg = require("../../package.json")
     commander
@@ -184,6 +195,7 @@ export async function mainCli() {
         .option("-t, --test-data", "include test data in binary model")
         .option("-T, --test-all", "test all included sample models")
         .option("-s, --sample-model <name>", "use an included sample model")
+        .option("-e, --eval <file.json>", "evaluate model on given test data")
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .arguments("<model>")
         .parse(process.argv)

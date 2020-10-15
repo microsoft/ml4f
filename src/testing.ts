@@ -201,3 +201,60 @@ export async function testAllModels(opts: Options) {
     }
     console.log(`\n*** All OK (${Date.now() - t0}ms)\n`)
 }
+
+export type EvalSample = number | number[] | number[][] | number[][][]
+export interface EvalData {
+    x: EvalSample[]
+    y: number[][]
+}
+
+function flattenSample(s: EvalSample) {
+    const res: number[] = []
+    const rec = (v: any) => {
+        if (Array.isArray(v))
+            v.forEach(rec)
+        else if (typeof v == "number")
+            res.push(v)
+        else
+            throw new Error("invalid input")
+    }
+    rec(s)
+    return res
+}
+
+function argmax(r: ArrayLike<number>) {
+    let maxI = 0
+    let max = r[0]
+    for (let i = 1; i < r.length; ++i) {
+        if (r[i] > max) {
+            max = r[i]
+            maxI = i
+        }
+    }
+    return maxI
+}
+
+export function evalModel(cres: CompileResult, data: EvalData) {
+    let numOK = 0
+    const dim = data.y[0].length
+    const confusion = U.range(dim).map(_ => U.range(dim).map(_ => 0))
+    for (let i = 0; i < data.x.length; ++i) {
+        const predProb = cres.execute(flattenSample(data.x[i]))
+        const pred = argmax(predProb)
+        const ok = argmax(data.y[i])
+        confusion[pred][ok]++
+        if (pred == ok) numOK++
+    }
+
+    let r = ""
+
+    r += `Accuracy: ${(numOK / data.x.length).toFixed(4)}\n`
+    for (let i = 0; i < dim; i++) {
+        for (let j = 0; j < dim; j++) {
+            r += ("     " + confusion[i][j]).slice(-5)
+        }
+        r += "\n"
+    }
+
+    return r
+}
