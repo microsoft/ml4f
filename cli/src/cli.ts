@@ -1,13 +1,13 @@
 import * as tf from '@tensorflow/tfjs'
 import * as fs from 'fs'
-import * as U from '../src/util'
 import * as path from 'path'
 import * as child_process from 'child_process'
-import { option, program as commander } from "commander"
-import { compileModel, compileModelAndFullValidate } from '../src/driver'
-import { Options } from '../src/compiler'
-import { sampleModel, testAllModels } from '../src/main'
-import { testFloatConv } from '../src/float16'
+import { program as commander } from "commander"
+import {
+    compileModel, compileModelAndFullValidate,
+    Options, sampleModel, testAllModels,
+    testFloatConv
+} from '../..'
 
 interface CmdOptions {
     debug?: boolean
@@ -211,3 +211,5 @@ export async function mainCli() {
         console.error(e.stack)
     }
 }
+
+if (require.main === module) mainCli()

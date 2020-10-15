@@ -1,6 +1,7 @@
 import commonjs from 'rollup-plugin-commonjs';
 import typescript from 'rollup-plugin-typescript2';
 import json from 'rollup-plugin-json'
+import dts from "rollup-plugin-dts";
 
 export default [
   { src: 'src/main.ts', dst: 'built/ml4f.js' }
@@ -14,7 +15,6 @@ export default [
       tsconfigOverride: {
         compilerOptions: {
           module: 'ES2015',
-          declaration: false
         }
       }
     }),
@@ -39,4 +39,8 @@ export default [
 
     console.warn(warning.code, warning.message)
   }
-}))
+})).concat([{
+  input: "./built/main.d.ts",
+  output: [{ file: "built/ml4f.d.ts", format: "es" }],
+  plugins: [dts()],
+}])

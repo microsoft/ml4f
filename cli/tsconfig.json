@@ -16,11 +16,10 @@
     "noImplicitAny": true,
     "noImplicitThis": true,
     "noImplicitReturns": true,
-    "outDir": "built",
+    "outDir": "../built/cli",
     "newLine": "LF",
     "typeRoots": [
-      "node_modules/@types"
+      "../node_modules/@types"
     ]
-  },
-  "include": [ "src" ]
+  }
 }
