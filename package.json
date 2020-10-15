@@ -14,7 +14,9 @@
   "types": "./built/ml4f.d.ts",
   "main": "./built/ml4f",
   "files": [
-    "./built"
+    "built/ml4f*.js",
+    "built/ml4f.d.ts",
+    "built/cli/cli.js"
   ],
   "devDependencies": {
     "rollup": "^2.26.4",
@@ -27,7 +29,6 @@
   },
   "dependencies": {
     "@tensorflow/tfjs": "^2.3.0",
-    "@tensorflow/tfjs-node": "^2.3.0",
     "@tensorflow/tfjs-vis": "^1.4.3",
     "commander": "^6.1.0"
   }
