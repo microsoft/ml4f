@@ -9,7 +9,6 @@ import {
     Options, sampleModel, testAllModels,
     testFloatConv
 } from '../..'
-import { op } from '@tensorflow/tfjs'
 
 interface CmdOptions {
     debug?: boolean
@@ -164,19 +163,24 @@ async function processModelFile(modelFile: string) {
     write(".js", cres.js)
     write(".ml4f", cres.machineCode)
 
+    let evalInfo = `\n*** ${built(options.basename + ".ml4f")}\n\n`
+
     if (options.eval) {
         const ev = evalModel(cres, JSON.parse(fs.readFileSync(options.eval, "utf8")))
-        console.log(`\n*** ${built(options.basename + ".ml4f")}\n${ev}`)
+        evalInfo += ev + "\n"
     }
 
-    console.log(cres.memInfo)
-    console.log(cres.timeInfo)
+    evalInfo += cres.memInfo + "\n"
+    evalInfo += cres.timeInfo + "\n"
+
+    write(".txt", evalInfo + "\n")
+
+    console.log("\n" + evalInfo)
 
     function write(ext: string, buf: string | Uint8Array) {
         const fn = built(options.basename + ext)
         const binbuf = typeof buf == "string" ? Buffer.from(buf, "utf8") : buf
-        if (!options.eval)
-            console.log(`write ${fn} (${binbuf.length} bytes)`)
+        console.log(`write ${fn} (${binbuf.length} bytes)`)
         fs.writeFileSync(fn, binbuf)
     }
 }
