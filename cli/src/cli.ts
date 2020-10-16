@@ -9,10 +9,12 @@ import {
     Options, sampleModel, testAllModels,
     testFloatConv
 } from '../..'
+import { op } from '@tensorflow/tfjs'
 
 interface CmdOptions {
     debug?: boolean
     output?: string
+    basename?: string
     validate?: boolean
     testData?: boolean
     sampleModel?: string
@@ -160,18 +162,18 @@ async function processModelFile(modelFile: string) {
 
     write(".asm", cres.thumb)
     write(".js", cres.js)
-    write(".bin", cres.machineCode)
+    write(".ml4f", cres.machineCode)
 
     if (options.eval) {
         const ev = evalModel(cres, JSON.parse(fs.readFileSync(options.eval, "utf8")))
-        console.log(`\n*** ${built("model.bin")}\n${ev}`)
+        console.log(`\n*** ${built(options.basename + ".ml4f")}\n${ev}`)
     }
 
     console.log(cres.memInfo)
     console.log(cres.timeInfo)
 
     function write(ext: string, buf: string | Uint8Array) {
-        const fn = built("model" + ext)
+        const fn = built(options.basename + ext)
         const binbuf = typeof buf == "string" ? Buffer.from(buf, "utf8") : buf
         if (!options.eval)
             console.log(`write ${fn} (${binbuf.length} bytes)`)
@@ -197,12 +199,14 @@ export async function mainCli() {
         .option("-s, --sample-model <name>", "use an included sample model")
         .option("-e, --eval <file.json>", "evaluate model on given test data")
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
+        .option("-b, --basename <name>", "basename of model files (default: 'model')")
         .arguments("<model>")
         .parse(process.argv)
 
     options = commander as CmdOptions
 
     if (!options.output) options.output = "built"
+    if (!options.basename) options.basename = "model"
 
     if (options.testAll) {
         testFloatConv()
