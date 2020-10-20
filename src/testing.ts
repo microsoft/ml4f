@@ -154,6 +154,22 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
                 kernelInitializer: 'varianceScaling',
                 activation: 'softmax'
             })
+        ],
+        microSpeech: [
+            tf.layers.conv2d({
+                inputShape: [49, 40, 1],
+                kernelSize: [10, 8],
+                filters: 8,
+                padding: "same",
+                activation: "relu",
+                strides: 2,
+            }),
+            tf.layers.flatten(),
+            tf.layers.dense({
+                units: 4,
+                kernelInitializer: 'varianceScaling',
+                activation: 'softmax'
+            })
         ]
     }
 }
