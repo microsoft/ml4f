@@ -102,7 +102,8 @@ function paddingConv2D(info: LayerInfo) {
     const res = info.inputShape.slice()
 
     for (let i = 1; i <= 2; ++i) {
-        const tmp = info.outputShape[i] + config.kernelSize[i - 1] - 1
+        const str = config.strides[i - 1]
+        const tmp = info.outputShape[i] * str + config.kernelSize[i - 1] - str
         assert(tmp >= res[i])
         res[i] = tmp
     }
@@ -657,7 +658,7 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
                 console.log(infostr + " " + tmp.optinfo)
             ops.push(tmp.opcodes)
         } else
-            console.log("unsupported layer: ", l.getClassName())
+            unsupported("layer: " + l.getClassName())
     }
 
     let flat = ir.flatten(ops)
