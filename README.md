@@ -33,7 +33,11 @@ Each layer is first compiled separately, and the generated code is run in simula
 The results are compared with running the same layer in TensorFlow.js.
 This process can be disabled with `--no-validate` option.
 Then layers are composed and the final binary code is generated.
+
 The binary is position-independent and can be loaded from any word-aligned address in flash or RAM.
+Look in `sample/` folder for example invocation from C, 
+or check out our [MakeCode extension](https://github.com/microsoft/pxt-ml4f).
+
 
 ## Compiling
 
