@@ -17,7 +17,7 @@ interface CmdOptions {
     validate?: boolean
     testData?: boolean
     sampleModel?: string
-    testAll?: boolean
+    selfTest?: boolean
     optimize?: boolean
     float16?: boolean
     eval?: string
@@ -212,7 +212,7 @@ export async function mainCli() {
     if (!options.output) options.output = "built"
     if (!options.basename) options.basename = "model"
 
-    if (options.testAll) {
+    if (options.selfTest) {
         testFloatConv()
         const opts = getCompileOptions()
         opts.includeTest = false
