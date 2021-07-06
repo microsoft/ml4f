@@ -32,8 +32,10 @@ interface LayerInfo {
 
 let inited = false
 const compilers: SMap<LayerCompileInfo> = {
-    Conv2D: { compile: compileConv2D, computePaddedInputShape: paddingConv2D },
-    MaxPooling2D: { compile: compileMaxPooling2D, computePaddedInputShape: paddingPool2D },
+    Conv2D: { compile: compileConv, computePaddedInputShape: paddingConv },
+    Conv1D: { compile: compileConv, computePaddedInputShape: paddingConv },
+    MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
+    MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
     Dense: { compile: compileDense },
     Dropout: {},
     Flatten: {},
@@ -72,10 +74,18 @@ function validateConfig(info: LayerInfo) {
     if (info.model.opts.verbose)
         console.log(info.inputShape, info.outputShape, config)
 
-    if (info.inputShape.length != 4)
-        unsupported("inputShape: " + info.inputShape.length)
-    if (config.dataFormat != "channelsLast")
-        unsupported("dataFormat: " + config.dataFormat)
+    const is2D = info.inputShape.length == 4
+
+    if (is2D) {
+        if (info.inputShape.length != 4 && info.inputShape.length != 3)
+            unsupported("inputShape: " + info.inputShape.length)
+        if (config.dataFormat != "channelsLast")
+            unsupported("dataFormat: " + config.dataFormat)
+    } else {
+        if (info.inputShape.length != 3)
+            unsupported("inputShape: " + info.inputShape.length)
+    }
+
     if (config.dtype && config.dtype != "float32")
         unsupported("dtype: " + config.dtype)
 }
@@ -97,11 +107,11 @@ function addActivation(res: ir.Op[], info: LayerInfo) {
         unsupported("activation: " + config.activation)
 }
 
-function paddingConv2D(info: LayerInfo) {
+function paddingConv(info: LayerInfo) {
     const config = info.layer.getConfig() as unknown as tfi.ConvLayerArgs
     const res = info.inputShape.slice()
 
-    for (let i = 1; i <= 2; ++i) {
+    for (let i = 1; i <= config.kernelSize.length; ++i) {
         const str = config.strides[i - 1]
         const tmp = info.outputShape[i] * str + config.kernelSize[i - 1] - str
         assert(tmp >= res[i])
@@ -111,11 +121,11 @@ function paddingConv2D(info: LayerInfo) {
     return res
 }
 
-function paddingPool2D(info: LayerInfo) {
+function paddingPool(info: LayerInfo) {
     const config = info.layer.getConfig() as unknown as tfi.Pooling2DLayerArgs
     const res = info.inputShape.slice()
 
-    for (let i = 1; i <= 2; ++i) {
+    for (let i = 1; i <= config.poolSize.length; ++i) {
         // TODO this may be wrong if config.poolSize != config.strides
         const tmp = info.outputShape[i] * config.strides[i - 1]
         if (tmp > res[i])
@@ -125,29 +135,28 @@ function paddingPool2D(info: LayerInfo) {
     return res
 }
 
-function compileConv2D(info: LayerInfo) {
+function compileConv(info: LayerInfo) {
     const config = info.layer.getConfig() as unknown as tfi.ConvLayerArgs
     const memRegs = numFPRegs >> 1
     const flashRegs = numFPRegs >> 1
 
     validateConfig(info)
 
-    const weights = info.layer.weights[0].read().arraySync() as number[][][][]
+    const is2D = config.kernelSize.length == 2
 
-    const kh = config.kernelSize[0]
-    const kw = config.kernelSize[1]
+    const weights0 = info.layer.weights[0].read().arraySync() as any
+    const weights = (is2D ? weights0 : [weights0]) as number[][][][]
 
-    const strh = config.strides[0]
-    const strw = config.strides[1]
+    const fix1D = (a: number[]) => {
+        a = a.slice()
+        if (!is2D) a.unshift(1)
+        return a
+    }
 
-    const inph = info.inputShape[1]
-    const inpw = info.inputShape[2]
-    const inpch = info.inputShape[3]
-
-    const outh = info.outputShape[1]
-    const outw = info.outputShape[2]
-    const outch = info.outputShape[3]
-
+    const [kh, kw] = fix1D(config.kernelSize)
+    const [strh, strw] = fix1D(config.strides)
+    const [inph, inpw, inpch] = fix1D(info.inputShape.slice(1))
+    const [outh, outw, outch] = fix1D(info.outputShape.slice(1))
 
     // padding not implemented yet
     assert(kh <= inph, "KH2")
@@ -247,26 +256,29 @@ function compileConv2D(info: LayerInfo) {
     return res
 }
 
-function compileMaxPooling2D(info: LayerInfo) {
+function compileMaxPooling(info: LayerInfo) {
     const config = info.layer.getConfig() as unknown as tfi.Pooling2DLayerArgs
+
+    const is2D = config.poolSize.length == 2
 
     validateConfig(info)
 
-    const kh = config.poolSize[0]
-    const kw = config.poolSize[1]
+    const fix1D = (a: number[]) => {
+        a = a.slice()
+        if (!is2D) a.unshift(1)
+        return a
+    }
 
-    const strh = config.strides[0]
-    const strw = config.strides[1]
-
-    const inph = info.inputShape[1]
-    const inpw = info.inputShape[2]
-    const numch = info.inputShape[3]
+    const [kh, kw] = fix1D(config.poolSize)
+    const [strh, strw] = fix1D(config.strides)
+    const [inph, inpw, numch] = fix1D(info.inputShape.slice(1))
+    const [outh, outw, outch] = fix1D(info.outputShape.slice(1))
 
     // padding not implemented yet
     assert(kh <= inph, "KH2")
     assert(kw <= inpw, "KW2")
 
-    assert(info.outputShape[3] == info.inputShape[3], "CH")
+    assert(numch == outch, "CH")
 
     if (kh - 1 > numTmpRegs)
         unsupported(`too high MaxPool2D area`)
@@ -292,8 +304,8 @@ function compileMaxPooling2D(info: LayerInfo) {
             }
 
             res.push(
-                ir.repeat(info.outputShape[1], () => ir.flatten(
-                    ir.repeat(info.outputShape[2], () => {
+                ir.repeat(outh, () => ir.flatten(
+                    ir.repeat(outw, () => {
                         const res: ir.Op[] = []
                         for (let i = 0; i < kh; ++i) {
                             for (let j = 0; j < kw; ++j) {
@@ -315,7 +327,7 @@ function compileMaxPooling2D(info: LayerInfo) {
                         )
                         return res
                     }),
-                    ptrRegs.map(r => ir.addPtr(r, null, strh * lineW - info.outputShape[2] * strw * numch)))))
+                    ptrRegs.map(r => ir.addPtr(r, null, strh * lineW - outw * strw * numch)))))
 
             return res
         })

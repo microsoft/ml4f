@@ -11,7 +11,9 @@ invoke [Python scripts](https://www.tensorflow.org/js/guide/conversion) to conve
 Once compiled, weights can be stored as `float32` or `float16`.
 
 The following operators are supported:
+* `Conv1D`
 * `Conv2D`
+* `MaxPooling1D`
 * `MaxPooling2D`
 * `Dense`
 

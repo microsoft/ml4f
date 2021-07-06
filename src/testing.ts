@@ -52,13 +52,13 @@ function logThumb(cres: CompileResult) {
 export async function runBrowser(seed: number) {
     tf.setBackend('cpu');
     const t0 = Date.now()
-    
+
     U.seedRandom(seed || 220)
 
     testFloatConv()
 
     // const m = await tf.loadLayersModel("./models/gestures.tfjsmodel.json")
-    const sample = sampleModel("tfjsGest")
+    const sample = sampleModel("oneD")
     const float16weights = true
     const optimize = false
     const opts: Options = { verbose: true, float16weights, optimize }
@@ -171,6 +171,37 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
                 kernelInitializer: 'varianceScaling',
                 activation: 'softmax'
             })
+        ],
+        oneD: [
+            tf.layers.conv1d({
+                inputShape: [50, 4],
+                kernelSize: [4],
+                strides: 1,
+                filters: 16,
+                activation: 'relu'
+            }),
+            tf.layers.maxPooling1d({ poolSize: [2] }),
+            tf.layers.dropout({ rate: 0.1 }),
+            tf.layers.conv1d({
+                kernelSize: [2],
+                strides: 1,
+                filters: 16,
+                activation: 'relu'
+            }),
+            tf.layers.maxPooling1d({ poolSize: [2] }),
+            tf.layers.dropout({ rate: 0.1 }),
+            tf.layers.conv1d({
+                kernelSize: [2],
+                strides: 1,
+                filters: 16,
+                activation: 'relu'
+            }),
+            tf.layers.dropout({ rate: 0.1 }),
+            tf.layers.flatten(),
+            tf.layers.dense({
+                units: 3,
+                activation: "softmax",
+            })
         ]
     }
 }
@@ -213,7 +244,7 @@ export async function testAllModels(opts: Options) {
     for (const m of allSampleModels()) {
         console.log(`***\n*** ${m.name}\n***`)
         console.log(opts.float16weights ? "--- F16" : "--- F32")
-        await compileModelAndFullValidate(m, opts)        
+        await compileModelAndFullValidate(m, opts)
         opts.float16weights = !opts.float16weights
         console.log(opts.float16weights ? "--- F16" : "--- F32")
         await compileModelAndFullValidate(m, opts)
