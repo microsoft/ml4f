@@ -49,10 +49,11 @@ function logThumb(cres: CompileResult) {
 }
 
 
-export async function runBrowser() {
+export async function runBrowser(seed: number) {
     tf.setBackend('cpu');
     const t0 = Date.now()
-    U.seedRandom(220)
+    
+    U.seedRandom(seed || 220)
 
     testFloatConv()
 
@@ -211,8 +212,10 @@ export async function testAllModels(opts: Options) {
     opts = U.flatClone(opts)
     for (const m of allSampleModels()) {
         console.log(`***\n*** ${m.name}\n***`)
-        await compileModelAndFullValidate(m, opts)
+        console.log(opts.float16weights ? "--- F16" : "--- F32")
+        await compileModelAndFullValidate(m, opts)        
         opts.float16weights = !opts.float16weights
+        console.log(opts.float16weights ? "--- F16" : "--- F32")
         await compileModelAndFullValidate(m, opts)
     }
     console.log(`\n*** All OK (${Date.now() - t0}ms)\n`)

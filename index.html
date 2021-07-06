@@ -18,7 +18,8 @@
 
   <script>
     document.addEventListener('DOMContentLoaded', function () {
-      ml4f.runBrowser()
+      const v = parseInt(window.location.search.replace(/.*seed=/, ""))
+      ml4f.runBrowser(v || 0)
     });
   </script>
 
