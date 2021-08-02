@@ -12,7 +12,8 @@
   "license": "MIT",
   "bin": "./ml4f",
   "types": "./built/ml4f.d.ts",
-  "main": "./built/ml4f",
+  "main": "./built/ml4f.js",
+  "module": "./built/ml4f.cjs",
   "files": [
     "built/ml4f*.js",
     "built/ml4f.d.ts",
