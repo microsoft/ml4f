@@ -213,3 +213,48 @@ export function getStatsFromBin(bin: Uint8Array) {
         arenaSize
     }
 }
+
+export function loadTfjsModelJSON(modelJSON: tf.io.ModelJSON) {
+    // remove regularizers, as we're not going to train the model, and unknown regularizers
+    // cause it to fail to load
+    const cfg = (modelJSON.modelTopology as any)?.model_config?.config
+    for (const layer of cfg?.layers || []) {
+        const layerConfig = layer?.config
+        if (layerConfig) {
+            layerConfig.bias_regularizer = null
+            layerConfig.activity_regularizer = null
+            layerConfig.bias_constraint = null
+        }
+    }
+
+    const model: tf.io.ModelArtifacts = {
+        modelTopology: modelJSON.modelTopology,
+        format: modelJSON.format,
+        generatedBy: modelJSON.generatedBy,
+        convertedBy: modelJSON.convertedBy,
+        trainingConfig: modelJSON.trainingConfig,
+        userDefinedMetadata: modelJSON.userDefinedMetadata
+    }
+
+    return model
+}
+
+export function loadFlatJSONModel(preModel: any) {
+    if (!preModel.modelJSON)
+        return null
+
+    let modelJSON: tf.io.ModelJSON
+    if (typeof preModel.modelJSON == "string")
+        modelJSON = JSON.parse(preModel.modelJSON)
+    else
+        modelJSON = preModel.modelJSON
+
+    const model = loadTfjsModelJSON(modelJSON)
+    const arr: number[] = preModel.weights
+    if (Array.isArray(arr)) {
+        model.weightData = new Uint32Array(arr).buffer
+        model.weightSpecs = (modelJSON as any).weightSpecs
+    }
+
+    return model
+}

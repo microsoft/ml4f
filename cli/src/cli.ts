@@ -6,6 +6,8 @@ import { program as commander } from "commander"
 import {
     compileModel, compileModelAndFullValidate,
     evalModel,
+    loadFlatJSONModel,
+    loadTfjsModelJSON,
     Options, sampleModel, testAllModels,
     testFloatConv
 } from '../..'
@@ -53,28 +55,18 @@ function loadJSONModel(modelPath: string) {
     if (modelBuf[0] != 0x7b)
         throw new Error("model not in JSON format")
 
-    const modelJSON = JSON.parse(modelBuf.toString("utf8")) as tf.io.ModelJSON
+    const preModel = JSON.parse(modelBuf.toString("utf8"))
 
-    // remove regularizers, as we're not going to train the model, and unknown regularizers
-    // cause it to fail to load
-    const cfg = (modelJSON.modelTopology as any)?.model_config?.config
-    for (const layer of cfg?.layers || []) {
-        const layerConfig = layer?.config
-        if (layerConfig) {
-            layerConfig.bias_regularizer = null
-            layerConfig.activity_regularizer = null
-            layerConfig.bias_constraint = null
-        }
-    }
+    const model0 = loadFlatJSONModel(preModel)
+    if (model0) return model0
 
-    const model: tf.io.ModelArtifacts = {
-        modelTopology: modelJSON.modelTopology,
-        format: modelJSON.format,
-        generatedBy: modelJSON.generatedBy,
-        convertedBy: modelJSON.convertedBy,
-        trainingConfig: modelJSON.trainingConfig,
-        userDefinedMetadata: modelJSON.userDefinedMetadata
-    }
+    const modelJSON: tf.io.ModelJSON = preModel
+
+    if (!modelJSON.modelTopology)
+        throw new Error("model not in tf.js JSON format")
+
+    const model = loadTfjsModelJSON(modelJSON)
+
     if (modelJSON.weightsManifest != null) {
         const dirName = path.dirname(modelPath);
         const buffers: Buffer[] = [];
@@ -152,8 +144,10 @@ async function processModelFile(modelFile: string) {
     if (options.sampleModel) {
         m = sampleModel(options.sampleModel)
     } else {
-        const model = loadModel(modelFile)
-        m = await tf.loadLayersModel({ load: () => model })
+        const model = await loadModel(modelFile)
+        if (!model.weightData)
+            throw new Error(`model '${modelFile}' is missing weights`)
+        m = await tf.loadLayersModel({ load: () => Promise.resolve(model) })
     }
 
     const opts = getCompileOptions()
