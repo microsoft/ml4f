@@ -2,7 +2,7 @@ import * as tf from '@tensorflow/tfjs'
 import { ThumbProcessor } from './thumb';
 import * as assembler from './assembler'
 import * as U from './util'
-import { assignLayerInfos, compileModelCore, CompileResult, partialModels, shapeElts } from './compiler';
+import { assignLayerInfos, compileModelCore, CompileResult, LayerStats, partialModels, shapeElts } from './compiler';
 import { Options } from './ir';
 
 const epsF32 = 0.00002
@@ -29,18 +29,18 @@ function throwAssemblerErrors(b: assembler.File) {
 }
 
 export function assemble(src: string) {
-    let b = mkProcessorFile()
-    b.emit(src);
+    const procFile = mkProcessorFile()
+    procFile.emit(src);
 
-    throwAssemblerErrors(b)
+    throwAssemblerErrors(procFile)
 
-    const buf = new Uint8Array(b.buf.length << 1)
-    for (let i = 0; i < b.buf.length; ++i) {
-        buf[i << 1] = b.buf[i] & 0xff
-        buf[(i << 1) + 1] = (b.buf[i] >> 8) & 0xff
+    const binary = new Uint8Array(procFile.buf.length << 1)
+    for (let i = 0; i < procFile.buf.length; ++i) {
+        binary[i << 1] = procFile.buf[i] & 0xff
+        binary[(i << 1) + 1] = (procFile.buf[i] >> 8) & 0xff
     }
 
-    return buf
+    return { binary, procFile }
 }
 
 function randomTensor(shape: tf.Shape, mult = 1) {
@@ -109,8 +109,16 @@ export function optionsWithTestData(m: tf.LayersModel, opts: Options) {
 
 export function compileModel(m: tf.LayersModel, opts: Options) {
     const cres = compileModelCore(m, opts)
-    cres.machineCode = assemble(cres.thumb)
-    const st = getStatsFromBin(cres.machineCode)
+    const ares = assemble(cres.thumb)
+    cres.machineCode = ares.binary
+
+    let idx = 0
+    for (const st of cres.stats.layers) {
+        st.codeBytes = ares.procFile.lookupLabel("end_" + idx) - ares.procFile.lookupLabel("begin_" + idx)
+        idx++
+    }
+
+    const st = getStatsFromBin(cres.machineCode, cres.stats.total)
     cres.memInfo = st.info
     return cres
 }
@@ -187,7 +195,7 @@ function readU32s(bin: Uint8Array) {
     return res
 }
 
-export function getStatsFromBin(bin: Uint8Array) {
+export function getStatsFromBin(bin: Uint8Array, stats?: LayerStats) {
     let [magic0, magic1, hdSize, totalSize, weightsOff, testInpOff, testOutOff, arenaSize] = readU32s(bin.slice(0, 64))
     if (magic0 != 0x30470f62)
         return null
@@ -203,6 +211,12 @@ export function getStatsFromBin(bin: Uint8Array) {
         `model: ${sz(modelSize)}; ` +
         `code: ${sz(codeSize)} (${codePerc.toFixed(1)}%); ` +
         `arena: ${sz(arenaSize)}; test ${sz(testSize)}`
+
+    if (stats) {
+        stats.arenaBytes = arenaSize
+        stats.codeBytes = codeSize
+        stats.weightBytes = modelSize
+    }
 
     return {
         info,

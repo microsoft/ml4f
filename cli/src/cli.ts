@@ -156,6 +156,7 @@ async function processModelFile(modelFile: string) {
     write(".asm", cres.thumb)
     write(".js", cres.js)
     write(".ml4f", cres.machineCode)
+    write("_layerStats.json", JSON.stringify(cres.stats, null, 4))
 
     let evalInfo = `\n*** ${built(options.basename + ".ml4f")}\n\n`
 

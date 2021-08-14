@@ -17,6 +17,28 @@ export interface CompileResult {
     options: Options
     memInfo: string
     timeInfo: string
+    stats: {
+        total: LayerStats
+        layers: LayerStats[]
+    }
+}
+
+export interface LayerStats {
+    // This comes from tf.js, something like flatten_Flatten1.
+    name: string
+    // If layer has padding, the arena size computation is somewhat unusual
+    hasPadding?: boolean
+    inputShape: number[]
+    outputShape: number[]
+    unoptimizedCycles: number
+    // time to execute; divide by 64000 to get milliseconds on micro:bit
+    optimizedCycles: number
+    // Size in flash is the sum of these two. Total size in flash in sum over all of them.
+    weightBytes: number
+    codeBytes: number
+    // Size in RAM for this layer, ie. sum of input and output layer sizes.
+    // Total size in RAM for model is close to the *max* (not sum) of these.
+    arenaBytes: number
 }
 
 interface LayerInfo {
@@ -28,6 +50,7 @@ interface LayerInfo {
     rawInputOff: number; // before padding
     inputOff: number;
     outputOff: number;
+    stats: LayerStats;
 }
 
 let inited = false
@@ -539,6 +562,7 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
         if (info.inputOff) info.inputOff = midOff
         if (info.outputOff) info.outputOff = midOff
         if (info.rawInputOff) info.rawInputOff = midOff
+        info.stats = { name: l.name } as LayerStats
     }
 
     const arenaSize = maxSize[0] + maxSize[1]
@@ -630,18 +654,24 @@ function compilePadding(info: LayerInfo) {
     }
 }
 
-function optimizeWithComment(opts: Options, opcodes: ir.Op[]) {
+function optimizeWithComment(opts: Options, opcodes: ir.Op[], stats: LayerStats) {
     if (opts.float16weights)
         opcodes = ir.fixupAndMarkF16(opcodes)
     const c0 = ir.numCycles(opcodes)
     if (opts.optimize)
         opcodes = ir.optimize(opcodes)
     const c1 = ir.numCycles(opcodes)
+    stats.unoptimizedCycles += c0
+    stats.optimizedCycles += c1
     const optRate = 100 * (c0 - c1) / c0
     const optinfo = c0 ? `${c1} cycles (${optRate.toFixed(1)}% opt)` : "(no computation)"
     if (c0)
         opcodes.unshift(ir.comment(optinfo))
     return { opcodes, optinfo }
+}
+
+function statsShape(shape: tf.Shape): number[] {
+    return shape.filter(x => x != null)
 }
 
 export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
@@ -651,18 +681,47 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
         opts.optimize = true
 
     const ops: ir.Op[][] = []
+    const layerStats: LayerStats[] = []
+
+    const layer0 = getLayerInfo(m.layers[0])
+    const layerN = getLayerInfo(m.layers[m.layers.length - 1])
+    const totalStats: LayerStats = {
+        name: "TOTAL",
+        inputShape: statsShape(layer0.rawInputShape || layer0.inputShape),
+        outputShape: statsShape(layerN.outputShape),
+        arenaBytes: 0,
+        codeBytes: 0,
+        weightBytes: 0,
+        unoptimizedCycles: 0,
+        optimizedCycles: 0
+    }
 
     for (const l of m.layers) {
         const info = getLayerInfo(l)
 
+        info.stats.unoptimizedCycles = 0
+        info.stats.optimizedCycles = 0
+        info.stats.arenaBytes = 0
+
+        info.stats.inputShape = statsShape(info.rawInputShape || info.inputShape)
+        info.stats.outputShape = statsShape(info.outputShape)
+
+        const statsIdx = layerStats.length
+        layerStats.push(info.stats)
+        ops.push([ir.label("begin_" + statsIdx)])
+
         if (info.rawInputOff != null) {
-            const tmp = optimizeWithComment(opts, compilePadding(info))
+            const tmp = optimizeWithComment(opts, compilePadding(info), info.stats)
             ops.push(tmp.opcodes)
+            info.stats.arenaBytes = (shapeElts(info.rawInputShape) + shapeElts(info.inputShape)) << 2
+            info.stats.hasPadding = true
         }
 
         const cinfo = compilers[l.getClassName()]
         if (cinfo) {
-            const tmp = optimizeWithComment(opts, cinfo.compile(info))
+            const size0 = ir.weightOffset(modelInfo)
+            const tmp = optimizeWithComment(opts, cinfo.compile(info), info.stats)
+            info.stats.weightBytes = (ir.weightOffset(modelInfo) - size0) << 2
             const shapeinfo = `data: ${shapeToString(info.inputShape)}@${info.inputOff} => ${shapeToString(info.outputShape)}@${info.outputOff}`
             const infostr = `Layer: ${l.getClassName()}; ${shapeinfo}`
             tmp.opcodes.unshift(ir.comment(infostr))
@@ -671,6 +730,12 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
             ops.push(tmp.opcodes)
         } else
             unsupported("layer: " + l.getClassName())
+
+        if (info.stats.unoptimizedCycles)
+            info.stats.arenaBytes = Math.max(info.stats.arenaBytes, (shapeElts(info.inputShape) + shapeElts(info.outputShape)) << 2)
+
+        totalStats.unoptimizedCycles += info.stats.unoptimizedCycles
+        ops.push([ir.label("end_" + statsIdx)])
     }
 
     let flat = ir.flatten(ops)
@@ -681,6 +746,8 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
     const cycles = ir.numCycles(flat)
     const cycleinfo = `total cycles: ${cycles} (${(cycles / 84000).toFixed(3)}ms at 84MHz)`
     modelInfo.stats = cycleinfo
+
+    totalStats.optimizedCycles = cycles
 
     if (opts.verbose)
         console.log(modelInfo.stats)
@@ -715,8 +782,8 @@ ${ir.toJSs(modelInfo, flat)}
 `
 
     const execute = (eval(js))(modelInfo.weightBuffer, mkRuntime)
-    let thumb = ""
 
+    let thumb = ""
     if (opts.includeTest && opts.testOutput && opts.testOutputFromJS) {
         // If requested, embed the output from JS code as reference in Thumb code
         // This is important for float16 - the JS and Thumb should be equivalent
@@ -736,7 +803,11 @@ ${ir.toJSs(modelInfo, flat)}
         machineCode: null,
         options: opts,
         memInfo: null,
-        timeInfo: modelInfo.stats
+        timeInfo: modelInfo.stats,
+        stats: {
+            total: totalStats,
+            layers: layerStats,
+        }
     }
 
     return res
