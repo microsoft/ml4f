@@ -32,6 +32,7 @@ export interface ModelInfo {
 
 export enum OpCode {
     comment,
+    label,
     repeat,
     loadWeightAddr,
     loadDataAddr,
@@ -166,6 +167,7 @@ export function numCycles(ops: Op[]): number {
     for (const op of ops) {
         switch (op.opcode) {
             case OpCode.comment:
+            case OpCode.label:
                 break
             case OpCode.repeat:
                 cycles += (numCycles(op.body) + 4 + (op.isDef ? 1 : 0)) * op.num + 1
@@ -451,6 +453,9 @@ _header:
         const incr = op.increment ? "!" : ""
 
         switch (op.opcode) {
+            case OpCode.label:
+                write(`${op.fname}:`)
+                break
             case OpCode.comment:
                 write(stringifyComment(op.fname))
                 break
@@ -597,6 +602,8 @@ function stringify1(op: Op): string {
     const srcAlt = op.srcAlt == null ? null : regName(op.srcAlt)
 
     switch (op.opcode) {
+        case OpCode.label:
+            return stringifyComment("label: " + op.fname) + "\n"
         case OpCode.comment:
             if (isBreak(op))
                 return "debugger\n"
@@ -702,6 +709,13 @@ export function comment(str: string): Op {
     return {
         opcode: OpCode.comment,
         fname: str
+    }
+}
+
+export function label(name: string): Op {
+    return {
+        opcode: OpCode.label,
+        fname: name
     }
 }
 
