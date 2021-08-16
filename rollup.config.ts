@@ -3,14 +3,18 @@ import typescript from "rollup-plugin-typescript2"
 import json from "rollup-plugin-json"
 import dts from "rollup-plugin-dts"
 
-export default [{ src: "src/main.ts", dst: "built/ml4f.js" }]
-    .map(({ src, dst }) => ({
+export default [
+    { src: "src/main.ts", name: "ml4f" },
+    { src: "pxt/extension.ts", name: "pxtml4f", tsconfig: "pxt/tsconfig.json" },
+]
+    .map(({ src, name, tsconfig }) => ({
         external: ["@tensorflow/tfjs"],
 
         input: src,
         plugins: [
             json(),
             typescript({
+                tsconfig,
                 tsconfigOverride: {
                     compilerOptions: {
                         module: "ES2015",
@@ -24,9 +28,9 @@ export default [{ src: "src/main.ts", dst: "built/ml4f.js" }]
         output: [
             {
                 extend: true,
-                file: dst,
+                file: `built/${name}.js`,
                 format: "umd",
-                name: "ml4f",
+                name,
                 globals: {
                     "@tensorflow/tfjs": "tf",
                 },
@@ -34,9 +38,9 @@ export default [{ src: "src/main.ts", dst: "built/ml4f.js" }]
             },
             {
                 extend: true,
-                file: dst.replace(/\.js/, ".cjs"),
+                file: `built/${name}.cjs`,
                 format: "cjs",
-                name: "ml4f",
+                name,
                 globals: {
                     "@tensorflow/tfjs": "tf",
                 },

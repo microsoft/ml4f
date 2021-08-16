@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "moduleResolution": "node",
+    "target": "es2017",
+    "module": "commonjs",
+    "lib": ["es2015", "es2016", "es2017", "DOM"],
+    "strict": false,
+    "sourceMap": true,
+    "declaration": true,
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "preserveConstEnums": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "noImplicitReturns": true,
+    "outDir": "../built",
+    "newLine": "LF",
+    "typeRoots": [
+      "../node_modules/@types"
+    ]
+  },
+  "include": [ "." ]
+}
