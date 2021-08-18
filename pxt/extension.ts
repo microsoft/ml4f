@@ -28,6 +28,14 @@ export interface SMap<T> {
     [index: string]: T
 }
 
+const accelSample =
+    `export function _sample() {
+    return [
+        input.acceleration(Dimension.X),
+        input.acceleration(Dimension.Y),
+        input.acceleration(Dimension.Z)
+    ]
+}`
 
 export class MakeCodeEditorExtensionClient {
     private readonly pendingCommands: {
@@ -237,6 +245,15 @@ export class MakeCodeEditorExtensionClient {
     }
 }
 
+export interface FlatJSONModel {
+    name: string
+    inputTypes: string[] // ["x","y","z"]; ["pressure"]
+    labels: string[]
+    modelJSON: {}
+    inputInterval: number // ms
+    weights: number[] // UInt32Array (little endian)
+}
+
 export async function start() {
     tf.setBackend("cpu")
 
@@ -244,8 +261,6 @@ export async function start() {
         f16: true
     }
     const pxtClient = new MakeCodeEditorExtensionClient()
-
-    console.log(await pxtClient.readUser())
 
     const maindiv = document.createElement("div")
     maindiv.style.background = "white"
@@ -268,41 +283,109 @@ export async function start() {
     dropbox.addEventListener("drop", e => {
         setStatus("reading model")
         stopEv(e)
-        const f = e.dataTransfer.files.item(0)
+        const file = e.dataTransfer.files.item(0)
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
-                const mod = JSON.parse(e.target.result as string)
-                const ma = ml4f.loadFlatJSONModel(mod)
-                const m = await tf.loadLayersModel({ load: () => Promise.resolve(ma) })
-                setStatus("compiling...") // can't see that...
-                const res = await ml4f.compileModelAndFullValidate(m, {
-                    verbose: false,
-                    includeTest: true,
-                    float16weights: options.f16,
-                    optimize: true
-                })
-                setStatus("compiled!")
-                let code =
-                    `// ${res.memInfo}\n` +
-                    `// ${res.timeInfo}\n` +
-                    `const mlModel = new ml4f.Model(\n` +
-                    "hex`"
-                for (let i = 0; i < res.machineCode.length; ++i) {
-                    code += ("0" + res.machineCode[i].toString(16)).slice(-2)
-                    if ((i + 3) % 32 == 0)
-                        code += "\n"
-                }
-                code += "`);\n"
-                await pxtClient.write(code)
-                setStatus("done; you can Go back now")
+                const mod: FlatJSONModel = JSON.parse(e.target.result as string)
+                await compileModel(mod, file.name)
             } catch (e) {
                 console.error(e.stack)
                 setError(e.message)
             }
         }
-        reader.readAsText(f)
+        reader.readAsText(file)
     }, false);
+
+    function shapeElements(shape: number[]) {
+        let res = 1
+        for (const s of shape) if (s != null) res *= s
+        return res
+    }
+
+    function toCamelCase(name: string) {
+        return name.replace(/(^|( +))(.)/g, (_0, _1, _2, l) => l.toUpperCase())
+    }
+
+    async function compileModel(mod: FlatJSONModel, fileName: string) {
+        const name = mod.name || fileName
+        const ma = ml4f.loadFlatJSONModel(mod)
+        const m = await tf.loadLayersModel({ load: () => Promise.resolve(ma) })
+        const inpTen = m.getInputAt(0) as tf.SymbolicTensor
+        const numClasses = shapeElements((m.getOutputAt(0) as tf.SymbolicTensor).shape)
+        const labels = (mod.labels || []).slice()
+        while (labels.length > numClasses) labels.pop()
+        while (labels.length < numClasses) labels.push("class " + labels.length)
+        const inputShape = inpTen.shape
+        const samplingPeriod = mod.inputInterval || 100
+        setStatus("compiling...") // can't see that...
+        const res = await ml4f.compileModelAndFullValidate(m, {
+            verbose: false,
+            includeTest: true,
+            float16weights: options.f16,
+            optimize: true
+        })
+        setStatus("compiled!")
+        const shape2 = inputShape.filter(v => v != null)
+        const samplesInWindow = shape2.shift()
+        const elementsInSample = shapeElements(shape2)
+
+        let code =
+            `// model: ${name}; input: ${JSON.stringify(inputShape)}; sampling at: ${samplingPeriod}ms\n` +
+            `// ${res.memInfo}\n` +
+            `// ${res.timeInfo}\n`
+
+        code += "export const enum MLEvent {\n"
+        let idx = 0
+        for (let lbl of labels) {
+            lbl = lbl.replace(/_/g, " ")
+            code += `    //% block="${lbl}"\n`
+            code += `    ${toCamelCase(lbl)} = ${idx},\n`
+            idx++
+        }
+        code += `}\n\n`
+        code += `namespace ml {\n`
+        code += `
+            let _classifier: Classifier
+            export function classifier() {
+                if (_classifier) return _classifier
+                _classifier = new Classifier(input => _model.invoke(input), _sample)
+                _classifier.detectionThreshold = 0.7
+                _classifier.samplingInterval = ${Math.round(samplingPeriod)} // ms
+                _classifier.samplesOverlap = ${Math.max(samplesInWindow >> 2, 1)}
+                _classifier.samplesInWindow = ${samplesInWindow}
+                _classifier.elementsInSample = ${elementsInSample}
+                _classifier.noiseClassNo = -1 // disable
+                _classifier.noiseSuppressionTime = 500 // ms
+                return _classifier
+            }
+
+            /**
+             * Run some code when a particular ML event is detected.
+             */
+            //% blockId=ml_on_event block="on ml event %condition"
+            //% blockGap=12 shim=input::onLightConditionChanged
+            export function onEvent(mlevent: MLEvent, handler: () => void) {
+                classifier().onEvent(mlevent, handler)
+            }
+            `
+        code += "\n" + accelSample + "\n" // TODO
+
+        code +=
+            `export const _model = new ml4f.Model(\n` +
+            "hex`"
+        for (let i = 0; i < res.machineCode.length; ++i) {
+            code += ("0" + res.machineCode[i].toString(16)).slice(-2)
+            if ((i + 3) % 32 == 0)
+                code += "\n"
+        }
+        code += "`);\n"
+        code += "\n} // namespace ml\n"
+
+        console.log(code.replace(/([a-f0-9]{64}\n)+/, "..."))
+        await pxtClient.write(code)
+        setStatus("done; you can Go back now")
+    }
 
     function stopEv(e: Event) {
         e.stopPropagation();
