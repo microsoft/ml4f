@@ -322,6 +322,7 @@ export function setButton(button: Button) {
                 _classifier.elementsInSample = ${elementsInSample}
                 _classifier.noiseClassNo = -1 // disable
                 _classifier.noiseSuppressionTime = 500 // ms
+                _classifier.start()
                 return _classifier
             }
 
