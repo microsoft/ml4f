@@ -18,13 +18,32 @@
     const HIDDEN = "hidden";
     const SHOWN = "shown";
     const CONNECT = "connect";
-    const accelSample = `export function _sample() {
+    const fakeSample = `
+export function _sample() {
+    while (true) {
+        basic.showString("_sample() missing")
+    }
+    return [@samples@]
+}`;
+    const accelSample = `
+export function _sample() {
     return [
-        input.acceleration(Dimension.X),
-        input.acceleration(Dimension.Y),
-        input.acceleration(Dimension.Z)
+        input.acceleration(Dimension.X) / 1024,
+        input.acceleration(Dimension.Y) / 1024,
+        input.acceleration(Dimension.Z) / 1024
     ]
 }`;
+    const buttonSample = `
+let _button = Button.A
+export function _sample() {
+    return [input.buttonIsPressed(_button) ? 1 : 0]
+}
+
+//% block="set ml button %button" blockId="ml_set_button"
+export function setButton(button: Button) {
+    _button = button
+}
+`;
     class MakeCodeEditorExtensionClient {
         constructor() {
             this.pendingCommands = {};
@@ -315,7 +334,15 @@
                 classifier().onEvent(mlevent, handler)
             }
             `;
-            code += "\n" + accelSample + "\n"; // TODO
+            let sample = fakeSample;
+            if (elementsInSample == 1)
+                sample = buttonSample;
+            else if (elementsInSample == 3)
+                sample = accelSample;
+            const exampleSample = [];
+            for (let i = 0; i < elementsInSample; ++i)
+                exampleSample.push(i);
+            code += "\n" + sample.replace("@sample@", JSON.stringify(exampleSample)) + "\n";
             code +=
                 `export const _model = new ml4f.Model(\n` +
                     "hex`";
