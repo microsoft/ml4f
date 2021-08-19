@@ -384,7 +384,7 @@ export async function start() {
              * Run some code when a particular ML event is detected.
              */
             //% blockId=ml_on_event block="on ml event %condition"
-            //% blockGap=12 shim=input::onLightConditionChanged
+            //% blockGap=12
             export function onEvent(mlevent: MLEvent, handler: () => void) {
                 classifier().onEvent(mlevent, handler)
             }
