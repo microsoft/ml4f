@@ -23,6 +23,7 @@ interface CmdOptions {
     optimize?: boolean
     float16?: boolean
     eval?: string
+    force?: boolean
 }
 
 let options: CmdOptions
@@ -145,7 +146,7 @@ async function processModelFile(modelFile: string) {
         m = sampleModel(options.sampleModel)
     } else {
         const model = await loadModel(modelFile)
-        if (!model.weightData)
+        if (!model.weightData && !options.force)
             throw new Error(`model '${modelFile}' is missing weights`)
         m = await tf.loadLayersModel({ load: () => Promise.resolve(model) })
     }
@@ -199,6 +200,7 @@ export async function mainCli() {
         .option("-e, --eval <file.json>", "evaluate model (confusion matrix, accuracy) on a given test data")
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .option("-b, --basename <name>", "basename of model files (default: 'model')")
+        .option("-f, --force", "force compilation even if certain errors are detected")
         .arguments("<model>")
         .parse(process.argv)
 
