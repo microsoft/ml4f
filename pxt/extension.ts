@@ -335,7 +335,7 @@ export async function start() {
             `// ${res.memInfo}\n` +
             `// ${res.timeInfo}\n`
 
-        code += "export const enum MLEvent {\n"
+        code += "const enum MLEvent {\n"
         let idx = 0
         for (let lbl of labels) {
             lbl = lbl.replace(/_/g, " ")
