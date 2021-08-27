@@ -4120,7 +4120,7 @@ ${toJSs(modelInfo, flat)}
         if (stats) {
             stats.arenaBytes = arenaSize;
             stats.codeBytes = codeSize;
-            stats.weightBytes = modelSize;
+            stats.weightBytes = modelSize - codeSize;
         }
         return {
             info,
