@@ -215,7 +215,7 @@ export function getStatsFromBin(bin: Uint8Array, stats?: LayerStats) {
     if (stats) {
         stats.arenaBytes = arenaSize
         stats.codeBytes = codeSize
-        stats.weightBytes = modelSize
+        stats.weightBytes = modelSize - codeSize
     }
 
     return {
