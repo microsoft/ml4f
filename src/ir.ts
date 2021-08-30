@@ -527,6 +527,11 @@ _header:
             case OpCode.loadFConst:
                 if (op.num == 0.0)
                     write(`vldr ${dst}, [${reg(Reg.DataDescPtr)}, #${zeroDO}]`)
+                else if (op.num == Number.NEGATIVE_INFINITY) {
+                    write(`movw r0, #0xff80`)
+                    write(`lsls r0, r0, #16`)
+                    write(`vmov ${dst}, r0`)
+                }
                 else
                     write(`vmov ${dst}, #${op.num}e+0`)
                 break
@@ -764,6 +769,14 @@ export function load0(dst: number): Op {
         opcode: OpCode.loadFConst,
         dst,
         num: 0.0
+    }
+}
+
+export function loadMInf(dst: number): Op {
+    return {
+        opcode: OpCode.loadFConst,
+        dst,
+        num: Number.NEGATIVE_INFINITY
     }
 }
 

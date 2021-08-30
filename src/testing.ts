@@ -202,7 +202,37 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
                 units: 3,
                 activation: "softmax",
             })
-        ]
+        ],
+        oneD2: [
+            tf.layers.conv1d({
+                inputShape: [10, 3],
+                kernelSize: [4],
+                strides: 1,
+                padding: 'same',
+                filters: 1,
+                activation: 'relu'
+            }),
+            tf.layers.flatten(),
+            tf.layers.dense({
+                units: 3,
+                activation: "softmax",
+            })
+        ],
+        oneD2_x: [
+            tf.layers.conv1d({
+                inputShape: [23, 3],
+                kernelSize: [4],
+                strides: 1,
+                padding: 'same',
+                filters: 16,
+                activation: 'relu'
+            }),
+            tf.layers.flatten(),
+            tf.layers.dense({
+                units: 3,
+                activation: "softmax",
+            })
+        ],
     }
 }
 

@@ -57,8 +57,8 @@ let inited = false
 const compilers: SMap<LayerCompileInfo> = {
     Conv2D: { compile: compileConv, computePaddedInputShape: paddingConv },
     Conv1D: { compile: compileConv, computePaddedInputShape: paddingConv },
-    MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
-    MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
+    MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
+    MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
     Dense: { compile: compileDense },
     Dropout: {},
     Flatten: {},
@@ -451,6 +451,7 @@ interface LayerCompileInfo {
     compile?: (info: LayerInfo) => ir.Op[]
     inPlace?: boolean
     testable?: boolean
+    needsMInfPadding?: boolean
     computePaddedInputShape?: (info: LayerInfo) => number[]
 }
 
@@ -472,6 +473,10 @@ function isInPlace(layer: tf.layers.Layer) {
 
 function isTestable(layer: tf.layers.Layer) {
     return !!compilers[layer.getClassName()]?.testable
+}
+
+function needMInfPadding(layer: tf.layers.Layer) {
+    return !!compilers[layer.getClassName()]?.needsMInfPadding
 }
 
 function shapeToString(shape: tf.Shape) {
@@ -578,13 +583,23 @@ export function assignLayerInfos(m: tf.LayersModel, opts: ir.Options) {
 }
 
 function compilePadding(info: LayerInfo) {
-    const res: ir.Op[] = []
+    const res: ir.Op[] = [
+        ir.comment("padding")
+    ]
 
     if (info.rawInputOff == null)
         return res
 
-    const [_batch0, inpy, inpx, numch] = info.rawInputShape
-    const [_batch1, outy, outx, outch] = info.inputShape
+    const is2D = info.rawInputShape.length >= 4
+    const fix1D = (a: number[]) => {
+        a = a.slice()
+        a.shift() // shift initial null
+        if (!is2D) a.unshift(1)
+        return a
+    }
+
+    const [inpy, inpx, numch] = fix1D(info.rawInputShape)
+    const [outy, outx, outch] = fix1D(info.inputShape)
     assert(numch == outch)
 
     const padx = outx - inpx
@@ -599,8 +614,8 @@ function compilePadding(info: LayerInfo) {
     const numData = numFPRegs - numZero
     const dataReg = Reg.S0 + numZero
 
-    res.push(ir.load0(Reg.S0))
-    // this is slightly cheaper than loading zeros from memory
+    res.push(needMInfPadding(info.layer) ? ir.loadMInf(Reg.S0) : ir.load0(Reg.S0))
+    // this is slightly cheaper than loading zeros (or -Inf) from memory
     for (let i = 1; i < numZero; ++i)
         res.push(ir.vadd(Reg.S0 + i, Reg.S0, Reg.S0))
 
@@ -869,12 +884,12 @@ export async function* partialModels(m: tf.LayersModel, opts: Options) {
         if (!isTestable(layer))
             continue
         const lcfg = layerJson.config
-        lcfg.batch_input_shape = info.inputShape
+        lcfg.batch_input_shape = info.rawInputShape
         cfg.layers = [layerJson]
         const copy = await tf.loadLayersModel({ load: () => Promise.resolve(mod) })
-        console.log(`testing ${layer.getClassName()}: ${shapeToString(info.inputShape)} => ${shapeToString(info.outputShape)}...`)
+        console.log(`testing ${layer.getClassName()}: ${shapeToString(info.rawInputShape)} => ${shapeToString(info.outputShape)}...`)
         yield copy
-        layerJson.config.batch_input_shape = info.inputShape
+        layerJson.config.batch_input_shape = info.rawInputShape
         // also test it without activation
         if (lcfg.activation) {
             lcfg.activation = null

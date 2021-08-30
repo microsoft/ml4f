@@ -154,7 +154,7 @@ export function validateCompilation(cres: CompileResult) {
     let numerr = 0
     for (let i = 0; i < res2.length; ++i) {
         if (!isNear(res[i], res2[i], opts.float16weights ? epsF16 : epsF32)) {
-            console.log(`at ${i} ${res[i]} - ${res2[i]} = ${res[i] - res2[i]}`)
+            console.log(`at ${i} ${res[i]}[exp] - ${res2[i]} = ${res[i] - res2[i]}`)
             numerr++
             if (numerr > 5) break
         }
