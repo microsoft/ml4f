@@ -2081,6 +2081,11 @@ _header:
                 case OpCode.loadFConst:
                     if (op.num == 0.0)
                         write(`vldr ${dst}, [${reg(Reg.DataDescPtr)}, #${zeroDO}]`);
+                    else if (op.num == Number.NEGATIVE_INFINITY) {
+                        write(`movw r0, #0xff80`);
+                        write(`lsls r0, r0, #16`);
+                        write(`vmov ${dst}, r0`);
+                    }
                     else
                         write(`vmov ${dst}, #${op.num}e+0`);
                     break;
@@ -2299,6 +2304,13 @@ _header:
             opcode: OpCode.loadFConst,
             dst,
             num: 0.0
+        };
+    }
+    function loadMInf(dst) {
+        return {
+            opcode: OpCode.loadFConst,
+            dst,
+            num: Number.NEGATIVE_INFINITY
         };
     }
     function load(dst, num, src, adv) {
@@ -2605,8 +2617,8 @@ _header:
     const compilers = {
         Conv2D: { compile: compileConv, computePaddedInputShape: paddingConv },
         Conv1D: { compile: compileConv, computePaddedInputShape: paddingConv },
-        MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
-        MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
+        MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
+        MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
         Dense: { compile: compileDense },
         Dropout: {},
         Flatten: {},
@@ -2913,6 +2925,10 @@ _header:
         var _a;
         return !!((_a = compilers[layer.getClassName()]) === null || _a === void 0 ? void 0 : _a.testable);
     }
+    function needMInfPadding(layer) {
+        var _a;
+        return !!((_a = compilers[layer.getClassName()]) === null || _a === void 0 ? void 0 : _a.needsMInfPadding);
+    }
     function shapeToString(shape) {
         return `[${shape.filter(x => x != null).join(",")}]`;
     }
@@ -3007,11 +3023,21 @@ _header:
         return modelInfo;
     }
     function compilePadding(info) {
-        const res = [];
+        const res = [
+            comment("padding")
+        ];
         if (info.rawInputOff == null)
             return res;
-        const [_batch0, inpy, inpx, numch] = info.rawInputShape;
-        const [_batch1, outy, outx, outch] = info.inputShape;
+        const is2D = info.rawInputShape.length >= 4;
+        const fix1D = (a) => {
+            a = a.slice();
+            a.shift(); // shift initial null
+            if (!is2D)
+                a.unshift(1);
+            return a;
+        };
+        const [inpy, inpx, numch] = fix1D(info.rawInputShape);
+        const [outy, outx, outch] = fix1D(info.inputShape);
         assert$2(numch == outch);
         const padx = outx - inpx;
         const x0 = padx >> 1;
@@ -3022,8 +3048,8 @@ _header:
         const numZero = numFPRegs >> 1;
         const numData = numFPRegs - numZero;
         const dataReg = Reg.S0 + numZero;
-        res.push(load0(Reg.S0));
-        // this is slightly cheaper than loading zeros from memory
+        res.push(needMInfPadding(info.layer) ? loadMInf(Reg.S0) : load0(Reg.S0));
+        // this is slightly cheaper than loading zeros (or -Inf) from memory
         for (let i = 1; i < numZero; ++i)
             res.push(vadd(Reg.S0 + i, Reg.S0, Reg.S0));
         res.push(loadDataAddr(Reg.InputPtr, info.rawInputOff));
@@ -3254,12 +3280,12 @@ ${toJSs(modelInfo, flat)}
                 if (!isTestable(layer))
                     continue;
                 const lcfg = layerJson.config;
-                lcfg.batch_input_shape = info.inputShape;
+                lcfg.batch_input_shape = info.rawInputShape;
                 cfg.layers = [layerJson];
                 const copy = yield __await(tf.loadLayersModel({ load: () => Promise.resolve(mod) }));
-                console.log(`testing ${layer.getClassName()}: ${shapeToString(info.inputShape)} => ${shapeToString(info.outputShape)}...`);
+                console.log(`testing ${layer.getClassName()}: ${shapeToString(info.rawInputShape)} => ${shapeToString(info.outputShape)}...`);
                 yield yield __await(copy);
-                layerJson.config.batch_input_shape = info.inputShape;
+                layerJson.config.batch_input_shape = info.rawInputShape;
                 // also test it without activation
                 if (lcfg.activation) {
                     lcfg.activation = null;
@@ -4064,7 +4090,7 @@ ${toJSs(modelInfo, flat)}
         let numerr = 0;
         for (let i = 0; i < res2.length; ++i) {
             if (!isNear(res[i], res2[i], opts.float16weights ? epsF16 : epsF32)) {
-                console.log(`at ${i} ${res[i]} - ${res2[i]} = ${res[i] - res2[i]}`);
+                console.log(`at ${i} ${res[i]}[exp] - ${res2[i]} = ${res[i] - res2[i]}`);
                 numerr++;
                 if (numerr > 5)
                     break;
@@ -4331,7 +4357,37 @@ ${toJSs(modelInfo, flat)}
                     units: 3,
                     activation: "softmax",
                 })
-            ]
+            ],
+            oneD2: [
+                tf.layers.conv1d({
+                    inputShape: [10, 3],
+                    kernelSize: [4],
+                    strides: 1,
+                    padding: 'same',
+                    filters: 1,
+                    activation: 'relu'
+                }),
+                tf.layers.flatten(),
+                tf.layers.dense({
+                    units: 3,
+                    activation: "softmax",
+                })
+            ],
+            oneD2_x: [
+                tf.layers.conv1d({
+                    inputShape: [23, 3],
+                    kernelSize: [4],
+                    strides: 1,
+                    padding: 'same',
+                    filters: 16,
+                    activation: 'relu'
+                }),
+                tf.layers.flatten(),
+                tf.layers.dense({
+                    units: 3,
+                    activation: "softmax",
+                })
+            ],
         };
     }
     let _models;
