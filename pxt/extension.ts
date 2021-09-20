@@ -1,5 +1,5 @@
-import * as ml4f from "..";
-import * as tf from '@tensorflow/tfjs'
+import { compileModelAndFullValidate, loadFlatJSONModel } from "../src/driver"
+import { setBackend, loadLayersModel, SymbolicTensor } from "@tensorflow/tfjs"
 
 export function inIFrame() {
     try {
@@ -9,20 +9,19 @@ export function inIFrame() {
     }
 }
 
-const CHANGE = 'change'
+const CHANGE = "change"
 export const READ = "read"
 export const MESSAGE_PACKET = "messagepacket"
 const HIDDEN = "hidden"
 const SHOWN = "shown"
-const SENDER = "jacdac-editor-extension"
+//const SENDER = "jacdac-editor-extension"
 const CONNECT = "connect"
 
 export interface ReadResponse {
-    code?: string;
-    json?: string;
-    jres?: string;
+    code?: string
+    json?: string
+    jres?: string
 }
-
 
 export interface SMap<T> {
     [index: string]: T
@@ -60,21 +59,23 @@ export function setButton(button: Button) {
 export class MakeCodeEditorExtensionClient {
     private readonly pendingCommands: {
         [key: string]: {
-            action: string;
-            resolve: (resp: any) => void;
-            reject: (e: any) => void;
+            action: string
+            resolve: (resp: any) => void
+            reject: (e: any) => void
         }
-    } = {};
-    private readonly extensionId: string = inIFrame() ? window.location.hash.substr(1) : undefined;
-    private _target: any; // full apptarget
-    private _connected = false;
-    private _visible = false;
+    } = {}
+    private readonly extensionId: string = inIFrame()
+        ? window.location.hash.substr(1)
+        : undefined
+    private _target: any // full apptarget
+    private _connected = false
+    private _visible = false
 
     constructor() {
-        this.handleMessage = this.handleMessage.bind(this);
-        window.addEventListener("message", this.handleMessage, false);
+        this.handleMessage = this.handleMessage.bind(this)
+        window.addEventListener("message", this.handleMessage, false)
         // notify parent that we're ready
-        this.init();
+        this.init()
     }
 
     emit(id: string, arg?: any) {
@@ -86,181 +87,187 @@ export class MakeCodeEditorExtensionClient {
     }
 
     get target() {
-        return this._target;
+        return this._target
     }
 
     get connected() {
-        return this._connected;
+        return this._connected
     }
 
     get visible() {
-        return this._visible;
+        return this._visible
     }
 
     private setVisible(vis: boolean) {
         if (this._visible !== vis) {
-            this._visible = vis;
-            this.emit(CHANGE);
+            this._visible = vis
+            this.emit(CHANGE)
         }
     }
 
-    private nextRequestId = 1;
-    private mkRequest(resolve: (resp: any) => void, reject: (e: any) => void, action: string, body?: any): any {
-        const id = "ml_" + this.nextRequestId++;
-        this.pendingCommands[id] = { action, resolve, reject };
+    private nextRequestId = 1
+    private mkRequest(
+        resolve: (resp: any) => void,
+        reject: (e: any) => void,
+        action: string,
+        body?: any
+    ): any {
+        const id = "ml_" + this.nextRequestId++
+        this.pendingCommands[id] = { action, resolve, reject }
         return {
             type: "pxtpkgext",
             action,
             extId: this.extensionId,
             response: true,
             id,
-            body
+            body,
         }
     }
 
     private sendRequest<T>(action: string, body?: any): Promise<T> {
         this.log(`send ${action}`)
-        if (!this.extensionId)
-            return Promise.resolve(undefined);
+        if (!this.extensionId) return Promise.resolve(undefined)
 
         return new Promise((resolve, reject) => {
-            const msg = this.mkRequest(resolve, reject, action, body);
-            window.parent.postMessage(msg, "*");
+            const msg = this.mkRequest(resolve, reject, action, body)
+            window.parent.postMessage(msg, "*")
         })
     }
 
     private handleMessage(ev: any) {
-        const msg = ev.data;
-        if (msg?.type !== "pxtpkgext")
-            return;
+        const msg = ev.data
+        if (msg?.type !== "pxtpkgext") return
         if (!msg.id) {
             switch (msg.event) {
                 case "extinit":
                     this.log(`init`)
-                    this._target = msg.target;
-                    this._connected = true;
-                    this.emit(CONNECT);
-                    this.emit(CHANGE);
-                    break;
+                    this._target = msg.target
+                    this._connected = true
+                    this.emit(CONNECT)
+                    this.emit(CHANGE)
+                    break
                 case "extloaded":
                     this.log(`loaded`)
-                    break;
+                    break
                 case "extshown":
                     this.setVisible(true)
-                    this.refresh();
-                    this.emit(SHOWN);
-                    this.emit(CHANGE);
-                    break;
+                    this.refresh()
+                    this.emit(SHOWN)
+                    this.emit(CHANGE)
+                    break
                 case "exthidden":
                     this.setVisible(false)
-                    this.emit(HIDDEN);
-                    this.emit(CHANGE);
-                    break;
+                    this.emit(HIDDEN)
+                    this.emit(CHANGE)
+                    break
                 case "extdatastream":
-                    this.emit('datastream', true);
-                    break;
+                    this.emit("datastream", true)
+                    break
                 case "extconsole":
-                    this.emit('console', msg.body);
-                    break;
+                    this.emit("console", msg.body)
+                    break
                 case "extmessagepacket":
-                    this.emit(MESSAGE_PACKET, msg.body);
-                    break;
+                    this.emit(MESSAGE_PACKET, msg.body)
+                    break
                 default:
-                    console.debug("Unhandled event", msg);
+                    console.debug("Unhandled event", msg)
             }
-        }
-        else {
-            const { action, resolve, reject } = this.pendingCommands[msg.id] || {};
-            delete this.pendingCommands[msg.id];
+        } else {
+            const { action, resolve, reject } =
+                this.pendingCommands[msg.id] || {}
+            delete this.pendingCommands[msg.id]
 
-            if (msg.success && resolve)
-                resolve(msg.resp);
-            else if (!msg.success && reject)
-                reject(msg.resp);
+            if (msg.success && resolve) resolve(msg.resp)
+            else if (!msg.success && reject) reject(msg.resp)
             // raise event as well
             switch (action) {
                 case "extinit":
-                    this._connected = true;
-                    this.emit('CONNECT');
-                    this.emit(CHANGE);
-                    break;
+                    this._connected = true
+                    this.emit("CONNECT")
+                    this.emit(CHANGE)
+                    break
                 case "extusercode":
                     // Loaded, set the target
-                    this.emit('readuser', msg.resp);
-                    this.emit(CHANGE);
-                    break;
+                    this.emit("readuser", msg.resp)
+                    this.emit(CHANGE)
+                    break
                 case "extreadcode":
                     // Loaded, set the target
-                    this.emit(READ, msg.resp);
-                    this.emit(CHANGE);
-                    break;
+                    this.emit(READ, msg.resp)
+                    this.emit(CHANGE)
+                    break
                 case "extwritecode":
-                    this.emit('written', undefined);
-                    break;
+                    this.emit("written", undefined)
+                    break
             }
         }
     }
 
     private async init() {
         this.log(`initializing`)
-        await this.sendRequest<void>('extinit');
+        await this.sendRequest<void>("extinit")
         this.log(`connected`)
-        await this.refresh();
+        await this.refresh()
     }
 
     private async refresh() {
         this.log(`refresh`)
-        const r = await this.read();
+        const r = await this.read()
     }
 
     async read(): Promise<ReadResponse> {
         if (!this.extensionId) {
-            const r: ReadResponse = {};
-            this.emit(READ, r);
-            return r;
+            const r: ReadResponse = {}
+            this.emit(READ, r)
+            return r
         } else {
-            const resp: ReadResponse = await this.sendRequest('extreadcode');
-            return resp;
+            const resp: ReadResponse = await this.sendRequest("extreadcode")
+            return resp
         }
     }
 
     async readUser() {
-        await this.sendRequest('extusercode')
+        await this.sendRequest("extusercode")
     }
 
-    async write(code: string, json?: string, jres?: string, dependencies?: SMap<string>): Promise<void> {
+    async write(
+        code: string,
+        json?: string,
+        jres?: string,
+        dependencies?: SMap<string>
+    ): Promise<void> {
         if (!this.extensionId) {
             // Write to local storage instead
-            this.emit('written', undefined);
+            this.emit("written", undefined)
         } else {
-            await this.sendRequest<void>('extwritecode', {
+            await this.sendRequest<void>("extwritecode", {
                 code: code || undefined,
                 json: json || undefined,
                 jres: jres || undefined,
-                dependencies
+                dependencies,
             })
         }
     }
 
     async queryPermission() {
-        await this.sendRequest('extquerypermission');
+        await this.sendRequest("extquerypermission")
     }
 
     async requestPermission(console: boolean) {
-        await this.sendRequest('extrequestpermission', {
-            console
+        await this.sendRequest("extrequestpermission", {
+            console,
         })
     }
 
     async dataStreamConsole(console: boolean) {
-        await this.sendRequest('extdatastream', {
-            console
+        await this.sendRequest("extdatastream", {
+            console,
         })
     }
 
     async dataStreamMessages(messages: boolean) {
-        await this.sendRequest('extdatastream', {
-            messages
+        await this.sendRequest("extdatastream", {
+            messages,
         })
     }
 }
@@ -269,16 +276,16 @@ export interface FlatJSONModel {
     name: string
     inputTypes: string[] // ["x","y","z"]; ["pressure"]
     labels: string[]
-    modelJSON: {}
+    modelJSON: unknown
     inputInterval: number // ms
     weights: number[] // UInt32Array (little endian)
 }
 
 export async function start() {
-    tf.setBackend("cpu")
+    setBackend("cpu")
 
     const options: SMap<boolean> = {
-        f16: true
+        f16: true,
     }
     const pxtClient = new MakeCodeEditorExtensionClient()
 
@@ -298,24 +305,30 @@ export async function start() {
     addCheckbox("f16", "Use float16 type")
 
     const dropbox = maindiv
-    dropbox.addEventListener("dragenter", stopEv, false);
-    dropbox.addEventListener("dragover", stopEv, false);
-    dropbox.addEventListener("drop", e => {
-        setStatus("reading model")
-        stopEv(e)
-        const file = e.dataTransfer.files.item(0)
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const mod: FlatJSONModel = JSON.parse(e.target.result as string)
-                await compileModel(mod, file.name)
-            } catch (e) {
-                console.error(e.stack)
-                setError(e.message)
+    dropbox.addEventListener("dragenter", stopEv, false)
+    dropbox.addEventListener("dragover", stopEv, false)
+    dropbox.addEventListener(
+        "drop",
+        e => {
+            setStatus("reading model")
+            stopEv(e)
+            const file = e.dataTransfer.files.item(0)
+            const reader = new FileReader()
+            reader.onload = async e => {
+                try {
+                    const mod: FlatJSONModel = JSON.parse(
+                        e.target.result as string
+                    )
+                    await compileModel(mod, file.name)
+                } catch (e) {
+                    console.error(e.stack)
+                    setError(e.message)
+                }
             }
-        }
-        reader.readAsText(file)
-    }, false);
+            reader.readAsText(file)
+        },
+        false
+    )
 
     function shapeElements(shape: number[]) {
         let res = 1
@@ -329,21 +342,23 @@ export async function start() {
 
     async function compileModel(mod: FlatJSONModel, fileName: string) {
         const name = mod.name || fileName
-        const ma = ml4f.loadFlatJSONModel(mod)
-        const m = await tf.loadLayersModel({ load: () => Promise.resolve(ma) })
-        const inpTen = m.getInputAt(0) as tf.SymbolicTensor
-        const numClasses = shapeElements((m.getOutputAt(0) as tf.SymbolicTensor).shape)
+        const ma = loadFlatJSONModel(mod)
+        const m = await loadLayersModel({ load: () => Promise.resolve(ma) })
+        const inpTen = m.getInputAt(0) as SymbolicTensor
+        const numClasses = shapeElements(
+            (m.getOutputAt(0) as SymbolicTensor).shape
+        )
         const labels = (mod.labels || []).slice()
         while (labels.length > numClasses) labels.pop()
         while (labels.length < numClasses) labels.push("class " + labels.length)
         const inputShape = inpTen.shape
         const samplingPeriod = mod.inputInterval || 100
         setStatus("compiling...") // can't see that...
-        const res = await ml4f.compileModelAndFullValidate(m, {
+        const res = await compileModelAndFullValidate(m, {
             verbose: false,
             includeTest: true,
             float16weights: options.f16,
-            optimize: true
+            optimize: true,
         })
         setStatus("compiled!")
         const shape2 = inputShape.filter(v => v != null)
@@ -351,7 +366,9 @@ export async function start() {
         const elementsInSample = shapeElements(shape2)
 
         let code =
-            `// model: ${name}; input: ${JSON.stringify(inputShape)}; sampling at: ${samplingPeriod}ms\n` +
+            `// model: ${name}; input: ${JSON.stringify(
+                inputShape
+            )}; sampling at: ${samplingPeriod}ms\n` +
             `// ${res.memInfo}\n` +
             `// ${res.timeInfo}\n`
 
@@ -371,8 +388,13 @@ export async function start() {
                 if (_classifier) return _classifier
                 _classifier = new Classifier(input => _model.invoke(input), _sample)
                 _classifier.detectionThreshold = 0.7
-                _classifier.samplingInterval = ${Math.round(samplingPeriod)} // ms
-                _classifier.samplesOverlap = ${Math.max(samplesInWindow >> 2, 1)}
+                _classifier.samplingInterval = ${Math.round(
+                    samplingPeriod
+                )} // ms
+                _classifier.samplesOverlap = ${Math.max(
+                    samplesInWindow >> 2,
+                    1
+                )}
                 _classifier.samplesInWindow = ${samplesInWindow}
                 _classifier.elementsInSample = ${elementsInSample}
                 _classifier.noiseClassNo = -1 // disable
@@ -392,23 +414,20 @@ export async function start() {
             `
 
         let sample = fakeSample
-        if (elementsInSample == 1)
-            sample = buttonSample
-        else if (elementsInSample == 3)
-            sample = accelSample
+        if (elementsInSample == 1) sample = buttonSample
+        else if (elementsInSample == 3) sample = accelSample
 
         const exampleSample = []
-        for (let i = 0; i < elementsInSample; ++i)
-            exampleSample.push(i)
-        code += "\n" + sample.replace("@sample@", JSON.stringify(exampleSample)) + "\n"
-
+        for (let i = 0; i < elementsInSample; ++i) exampleSample.push(i)
         code +=
-            `export const _model = new ml4f.Model(\n` +
-            "hex`"
+            "\n" +
+            sample.replace("@sample@", JSON.stringify(exampleSample)) +
+            "\n"
+
+        code += `export const _model = new ml4f.Model(\n` + "hex`"
         for (let i = 0; i < res.machineCode.length; ++i) {
             code += ("0" + res.machineCode[i].toString(16)).slice(-2)
-            if ((i + 3) % 32 == 0)
-                code += "\n"
+            if ((i + 3) % 32 == 0) code += "\n"
         }
         code += "`);\n"
         code += "\n} // namespace ml\n"
@@ -419,8 +438,8 @@ export async function start() {
     }
 
     function stopEv(e: Event) {
-        e.stopPropagation();
-        e.preventDefault();
+        e.stopPropagation()
+        e.preventDefault()
     }
 
     function div(text: string): HTMLDivElement {
@@ -446,10 +465,9 @@ export async function start() {
         lbl.prepend(box)
         box.type = "checkbox"
         box.checked = !!options[field]
-        box.addEventListener('change', () => {
-            if (box.checked)
-                options[field] = !!box.checked
-        });
+        box.addEventListener("change", () => {
+            if (box.checked) options[field] = !!box.checked
+        })
         maindiv.appendChild(lbl)
     }
 }
