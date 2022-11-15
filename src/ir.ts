@@ -208,7 +208,7 @@ export function numCycles(ops: Op[]): number {
                 else if (op.num == 1)
                     cycles += 1
                 else
-                    cycles += 4 // ??
+                    cycles += 6 // ??
                 break
             case OpCode.load:
                 cycles += 1 + op.num
@@ -427,7 +427,9 @@ _header:
 
     function addConst(dst: string, src: string, num: number) {
         if (Math.abs(num) < (1 << 12)) {
-            if (num < 0)
+            if (num == 0)
+                write(`mov ${dst}, ${src}`)
+            else if (num < 0)
                 write(`subw ${dst}, ${src}, #${-num}`)
             else
                 write(`addw ${dst}, ${src}, #${num}`)
@@ -531,9 +533,16 @@ _header:
                     write(`movw r0, #0xff80`)
                     write(`lsls r0, r0, #16`)
                     write(`vmov ${dst}, r0`)
+                } else {
+                    const lbl = `${lblid++}`
+                    const tmp = float32ToUInt32(op.num)
+                    write(`ldr r0, .f.${lbl}`)
+                    write(`b .s.${lbl}`)
+                    write(`.balign 4`)
+                    write(`.f.${lbl}: .word 0x${tmp.toString(16)} ; ${op.num}`)
+                    write(`.s.${lbl}:`)
+                    write(`vmov ${dst}, r0`)
                 }
-                else
-                    write(`vmov ${dst}, #${op.num}e+0`)
                 break
             case OpCode.load:
                 assert(op.f16Mode != F16Mode.On)
@@ -769,6 +778,14 @@ export function load0(dst: number): Op {
         opcode: OpCode.loadFConst,
         dst,
         num: 0.0
+    }
+}
+
+export function loadLit(dst: number, num: number): Op {
+    return {
+        opcode: OpCode.loadFConst,
+        dst,
+        num
     }
 }
 

@@ -59,7 +59,10 @@ const compilers: SMap<LayerCompileInfo> = {
     Conv1D: { compile: compileConv, computePaddedInputShape: paddingConv },
     MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
     MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
+    AveragePooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
+    AveragePooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
     Dense: { compile: compileDense },
+    Activation: { compile: compileActivation, inPlace: true },
     Dropout: {},
     Flatten: {},
     InputLayer: {},
@@ -67,7 +70,7 @@ const compilers: SMap<LayerCompileInfo> = {
 }
 
 const numFPRegs = 32
-const numTmpRegs = 8
+const numTmpRegs = 6 // ??
 
 function unsupported(msg: string) {
     debugger
@@ -284,7 +287,12 @@ function compileMaxPooling(info: LayerInfo) {
 
     const is2D = config.poolSize.length == 2
 
+    const isAvg = info.layer.getClassName().startsWith("Average")
+
     validateConfig(info)
+
+    if (isAvg && config.padding != "valid")
+        unsupported("only 'valid' padding supported for AvgPool")
 
     const fix1D = (a: number[]) => {
         a = a.slice()
@@ -303,9 +311,7 @@ function compileMaxPooling(info: LayerInfo) {
 
     assert(numch == outch, "CH")
 
-    if (kh - 1 > numTmpRegs)
-        unsupported(`too high MaxPool2D area`)
-
+    const singleInputPtr = kh - 1 > numTmpRegs
     const lineW = inpw * numch
 
     return [
@@ -317,37 +323,60 @@ function compileMaxPooling(info: LayerInfo) {
                 ir.addPtr(Reg.InputPtr, filt),
             ]
 
-            const ptrRegs = U.range(kh - 1).map(i => Reg.Tmp0 + i)
+            const ptrRegs = singleInputPtr ? [] : U.range(kh - 1).map(i => Reg.Tmp0 + i)
             ptrRegs.unshift(Reg.InputPtr)
 
-            for (let i = 1; i < kh; ++i) {
-                const op = ir.addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr)
-                op.isDef = true
-                res.push(op)
-            }
+            if (!singleInputPtr)
+                for (let i = 1; i < kh; ++i) {
+                    const op = ir.addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr)
+                    op.isDef = true
+                    res.push(op)
+                }
 
             res.push(
                 ir.repeat(outh, () => ir.flatten(
                     ir.repeat(outw, () => {
                         const res: ir.Op[] = []
                         for (let i = 0; i < kh; ++i) {
+                            let preg = ptrRegs[i]
+                            if (singleInputPtr) {
+                                preg = Reg.Tmp0
+                                const op = ir.addPtr(preg, null, lineW * i, Reg.InputPtr)
+                                if (i == 0)
+                                    op.isDef = true
+                                res.push(op)
+                            }
                             for (let j = 0; j < kw; ++j) {
                                 const reg = i == 0 && j == 0 ? Reg.S0 : Reg.S1
                                 res.push(
-                                    ir.load(reg, 1, ptrRegs[i], true),
-                                    ir.addPtr(ptrRegs[i], null, numch - 1)
+                                    ir.load(reg, 1, preg, true),
+                                    ir.addPtr(preg, null, numch - 1)
                                 )
-                                if (reg != Reg.S0)
-                                    res.push(ir.vmax(Reg.S0, Reg.S0, reg))
+                                if (reg != Reg.S0) {
+                                    if (isAvg)
+                                        res.push(ir.vadd(Reg.S0, Reg.S0, reg))
+                                    else
+                                        res.push(ir.vmax(Reg.S0, Reg.S0, reg))
+                                }
                             }
-                            res.push(
-                                ir.addPtr(ptrRegs[i], null, (strw - kw) * numch)
-                            )
+                            if (!singleInputPtr)
+                                res.push(
+                                    ir.addPtr(preg, null, (strw - kw) * numch)
+                                )
                         }
+                        if (isAvg)
+                            res.push(
+                                ir.loadLit(Reg.S1, 1 / (kw * kh)),
+                                ir.vmul(Reg.S0, Reg.S0, Reg.S1)
+                            )
                         res.push(
                             ir.store(Reg.OutputPtr, Reg.S0, 1, true),
                             ir.addPtr(Reg.OutputPtr, null, numch - 1)
                         )
+                        if (singleInputPtr)
+                            res.push(
+                                ir.addPtr(Reg.InputPtr, null, strw * numch )
+                            )
                         return res
                     }),
                     ptrRegs.map(r => ir.addPtr(r, null, strh * lineW - outw * strw * numch)))))
@@ -432,6 +461,12 @@ function compileDense(info: LayerInfo) {
 
     addActivation(res, info)
 
+    return res
+}
+
+function compileActivation(info: LayerInfo) {
+    const res: ir.Op[] = []
+    addActivation(res, info)
     return res
 }
 

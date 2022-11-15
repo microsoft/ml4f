@@ -6,7 +6,7 @@ import { assignLayerInfos, compileModelCore, CompileResult, LayerStats, partialM
 import { Options } from './ir';
 
 const epsF32 = 0.00002
-const epsF16 = 0.0045
+const epsF16 = 0.01
 
 function mkProcessorFile() {
     const b = new assembler.File(new ThumbProcessor())

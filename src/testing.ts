@@ -233,6 +233,30 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
                 activation: "softmax",
             })
         ],
+        avgPool: [
+            tf.layers.inputLayer({ inputShape: [150] }),
+            tf.layers.reshape({ targetShape: [50, 3, 1] }),
+            tf.layers.conv2d({ filters: 16, kernelSize: 4, strides: 1, padding: "same", activation: "relu" }),
+            tf.layers.avgPooling2d({ poolSize: 2, strides: 2, padding: "valid" }),
+            tf.layers.flatten(),
+            tf.layers.dense({ units: 3, activation: "softmax" }),
+        ],
+        avgPool2: [
+            tf.layers.inputLayer({ inputShape: [150] }),
+            tf.layers.reshape({ targetShape: [50, 3, 1] }),
+            tf.layers.conv2d({ filters: 16, kernelSize: 4, strides: 1, padding: "same", activation: "relu" }),
+            tf.layers.avgPooling2d({ poolSize: [2, 1], strides: [2, 1], padding: "valid" }),
+            tf.layers.flatten(),
+            tf.layers.dense({ units: 3, activation: "softmax" }),
+        ],
+        avgPool3: [
+            tf.layers.inputLayer({ inputShape: [150] }),
+            tf.layers.reshape({ targetShape: [50, 3, 1] }),
+            // tf.layers.conv2d({ filters: 16, kernelSize: 4, strides: 1, padding: "same", activation: "relu" }),
+            tf.layers.avgPooling2d({ poolSize: [8, 1], strides: [2, 1], padding: "valid" }),
+            tf.layers.flatten(),
+            tf.layers.dense({ units: 3, activation: "softmax" }),
+        ],
     }
 }
 
