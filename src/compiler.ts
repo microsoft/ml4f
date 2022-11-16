@@ -57,12 +57,15 @@ let inited = false
 const compilers: SMap<LayerCompileInfo> = {
     Conv2D: { compile: compileConv, computePaddedInputShape: paddingConv },
     Conv1D: { compile: compileConv, computePaddedInputShape: paddingConv },
+    DepthwiseConv2D: { compile: compileDepthConv, computePaddedInputShape: paddingConv },
+    DepthwiseConv1D: { compile: compileDepthConv, computePaddedInputShape: paddingConv },
     MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
     MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
     AveragePooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
     AveragePooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
     Dense: { compile: compileDense },
     Activation: { compile: compileActivation, inPlace: true },
+    BatchNormalization: {},
     Dropout: {},
     Flatten: {},
     InputLayer: {},
@@ -140,8 +143,9 @@ function paddingConv(info: LayerInfo) {
     for (let i = 1; i <= config.kernelSize.length; ++i) {
         const str = config.strides[i - 1]
         const tmp = info.outputShape[i] * str + config.kernelSize[i - 1] - str
-        assert(tmp >= res[i])
-        res[i] = tmp
+        assert(tmp + str - 1 >= res[i], `${tmp} >= ${res[i]}`)
+        if (tmp > res[i])
+            res[i] = tmp
     }
 
     return res
@@ -282,6 +286,160 @@ function compileConv(info: LayerInfo) {
     return res
 }
 
+function compileDepthConv(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.DepthwiseConvLayerArgs
+    const flashRegOff = 2
+    const flashRegs = numFPRegs - flashRegOff
+
+    validateConfig(info)
+
+    const is2D = config.kernelSize.length == 2
+
+    const weights0 = info.layer.weights[0].read().arraySync() as any
+    const weights = (is2D ? weights0 : [weights0]) as number[][][][]
+
+    const fix1D = (a: number[]) => {
+        a = a.slice()
+        if (!is2D) a.unshift(1)
+        return a
+    }
+
+    const [kh, kw] = fix1D(config.kernelSize)
+    const [strh, strw] = fix1D(config.strides)
+    const [inph, inpw, inpch] = fix1D(info.inputShape.slice(1))
+    const [outh, outw, outch] = fix1D(info.outputShape.slice(1))
+
+    assert(kh <= inph, "KH2")
+    assert(kw <= inpw, "KW2")
+
+    assert(weights.length == kh, "KH")
+    assert(weights[0].length == kw, "KW")
+    assert(weights[0][0].length == inpch, "CH")
+    assert(weights[0][0][0].length == config.depthMultiplier, "F")
+    assert(outch == config.depthMultiplier * inpch, "FF")
+
+    const mi = info.model
+    const weightsIdx = ir.weightOffset(mi)
+    const bias = config.useBias ? info.layer.weights[1].read().arraySync() as number[] : null
+
+    if (bias)
+        unsupported("bias in depthwise")
+
+    /*
+output[i, j, k * channel_multiplier + q] =
+    sum_{di, dj} 
+           input[strides[1] * i + di,
+                 strides[2] * j + dj, k] *
+           filter[di, dj, k, q]
+
+for q up to channel_mult
+  for k up to num_ch
+    num_ch*chmult==outch
+    F = load filter k,q
+    for i, j
+      op = &output[i,j,k*chmult+q]
+      *op = 0
+      for di, dj
+        *op += filter[di,dj,k,q]
+           */
+
+    for (let q = 0; q < config.depthMultiplier; q++) {
+        if (bias)
+            ir.addBias(mi, bias[q]) // ???
+        for (let k = 0; k < inpch; ++k) {
+            for (let y = 0; y < kh; y++) {
+                for (let x = 0; x < kw; x++)
+                    ir.addWeight(mi, weights[y][x][k][q])
+            }
+            ir.alignWeights(mi)
+        }
+    }
+
+    const res = [
+        ir.loadWeightAddr(Reg.KernelPtr, weightsIdx),
+        ir.repeatIdx(config.depthMultiplier, q =>
+            [ir.repeatIdx(inpch, k => {
+                const res: ir.Op[] = []
+
+                const setOutput = (res: ir.Op[]) => {
+                    res.push(ir.loadDataAddr(Reg.OutputPtr, info.outputOff))
+                    res.push(ir.addPtr(Reg.OutputPtr, k, config.depthMultiplier))
+                    res.push(ir.addPtr(Reg.OutputPtr, q))
+                }
+
+                setOutput(res)
+                if (config.useBias)
+                    res.push(ir.load(Reg.S0, 1, Reg.KernelPtr, true))
+                else
+                    res.push(ir.load0(Reg.S0))
+
+                res.push(
+                    ir.repeat(outw * outh, () => [
+                        ir.store(Reg.OutputPtr, Reg.S0, 1, false),
+                        ir.addPtr(Reg.OutputPtr, null, outch)
+                    ]))
+
+                const kernSz = kh * kw
+
+                let skipAcc = 0
+                const skipAfter = (kernOff: number) => {
+                    const r = (kernOff % kw == kw - 1 ? inpw - kw + 1 : 1) * inpch
+                    skipAcc += r
+                    return r
+                }
+
+                let chunk = 0
+                for (let kernOff = 0; kernOff < kernSz; kernOff += chunk) {
+                    chunk = kernSz - kernOff
+                    if (chunk > flashRegs)
+                        chunk = flashRegs
+                    res.push(ir.loadWeight(mi, flashRegOff, chunk))
+
+                    let skip = 0
+                    for (let i = 0; i < kernOff; ++i)
+                        skip += skipAfter(i)
+
+                    res.push(
+                        ir.loadDataAddr(Reg.InputPtr, info.inputOff + skip),
+                        ir.addPtr(Reg.InputPtr, k)
+                    )
+
+                    setOutput(res)
+
+                    const wSkip = strw * inpch
+                    const hSkip = strh * inpw * inpch
+
+                    res.push(ir.repeat(outh, () =>
+                        [ir.repeat(outw, () => {
+                            skipAcc = 0
+                            const tmp = ir.flatten(
+                                ir.load0(Reg.S1),
+                                U.range(chunk).map(i => [
+                                    ir.load(Reg.S0, 1, Reg.InputPtr, false),
+                                    ir.addPtr(Reg.InputPtr, null, skipAfter(kernOff + i)),
+                                    ir.vmul(Reg.S0, Reg.S0, i + flashRegOff),
+                                    ir.vadd(Reg.S1, Reg.S1, Reg.S0),
+                                ]),
+                                ir.load(Reg.S0, 1, Reg.OutputPtr, false),
+                                ir.vadd(Reg.S0, Reg.S0, Reg.S1),
+                                ir.store(Reg.OutputPtr, Reg.S0, 1, false),
+                                ir.addPtr(Reg.OutputPtr, null, outch))
+                            tmp.push(ir.addPtr(Reg.InputPtr, null, wSkip - skipAcc))
+                            return tmp
+                        }),
+                        ir.addPtr(Reg.InputPtr, null, hSkip - outw * wSkip)]))
+                }
+
+                res.push(ir.relaxWeights())
+
+                return res
+            })])]
+
+    addActivation(res, info)
+
+    return res
+}
+
 function compileMaxPooling(info: LayerInfo) {
     const config = info.layer.getConfig() as unknown as tfi.Pooling2DLayerArgs
 
@@ -375,7 +533,7 @@ function compileMaxPooling(info: LayerInfo) {
                         )
                         if (singleInputPtr)
                             res.push(
-                                ir.addPtr(Reg.InputPtr, null, strw * numch )
+                                ir.addPtr(Reg.InputPtr, null, strw * numch)
                             )
                         return res
                     }),
@@ -778,8 +936,10 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
             if (opts.verbose)
                 console.log(infostr + " " + tmp.optinfo)
             ops.push(tmp.opcodes)
-        } else
+        } else {
+            console.log(l.getConfig())
             unsupported("layer: " + l.getClassName())
+        }
 
         if (info.stats.unoptimizedCycles)
             info.stats.arenaBytes = Math.max(info.stats.arenaBytes, (shapeElts(info.inputShape) + shapeElts(info.outputShape)) << 2)
@@ -793,8 +953,9 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
     const lastInfo = getLayerInfo(m.layers[m.layers.length - 1])
     modelInfo.outputOffset = lastInfo.outputOff
 
+    const mhz = 64
     const cycles = ir.numCycles(flat)
-    const cycleinfo = `total cycles: ${cycles} (${(cycles / 84000).toFixed(3)}ms at 84MHz)`
+    const cycleinfo = `total cycles: ${cycles} (${(cycles / (mhz * 1000)).toFixed(3)}ms at ${mhz}MHz)`
     modelInfo.stats = cycleinfo
 
     totalStats.optimizedCycles = cycles
@@ -926,7 +1087,7 @@ export async function* partialModels(m: tf.LayersModel, opts: Options) {
         yield copy
         layerJson.config.batch_input_shape = info.rawInputShape
         // also test it without activation
-        if (lcfg.activation) {
+        if (lcfg.activation && lcfg.activation != "linear") {
             lcfg.activation = null
             const withoutAct = await tf.loadLayersModel({ load: () => Promise.resolve(mod) })
             console.log(`also with no activation...`)

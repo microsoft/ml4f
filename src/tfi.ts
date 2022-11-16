@@ -37,6 +37,10 @@ export declare interface ConvLayerArgs extends BaseConvLayerArgs {
     filters: number;
 }
 
+export declare interface DepthwiseConvLayerArgs extends BaseConvLayerArgs {
+    depthMultiplier: number;
+}
+
 export declare interface Pooling2DLayerArgs extends LayerArgs {
     poolSize: [number, number];
     strides: [number, number];

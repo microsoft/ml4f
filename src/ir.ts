@@ -421,8 +421,16 @@ _header:
         // TODO?
         if (num <= 0xff && isLowReg(dst))
             write(`movs ${dst}, #${num}`)
-        else
+        else if (num <= 0xffff)
             write(`movw ${dst}, #${num}`)
+        else {
+            const lbl = `${lblid++}`
+            write(`ldr ${dst}, .c.${lbl}`)
+            write(`b .s.${lbl}`)
+            write(`.balign 4`)
+            write(`.c.${lbl}: .word ${num}`)
+            write(`.s.${lbl}:`)
+        }
     }
 
     function addConst(dst: string, src: string, num: number) {
@@ -534,13 +542,8 @@ _header:
                     write(`lsls r0, r0, #16`)
                     write(`vmov ${dst}, r0`)
                 } else {
-                    const lbl = `${lblid++}`
                     const tmp = float32ToUInt32(op.num)
-                    write(`ldr r0, .f.${lbl}`)
-                    write(`b .s.${lbl}`)
-                    write(`.balign 4`)
-                    write(`.f.${lbl}: .word 0x${tmp.toString(16)} ; ${op.num}`)
-                    write(`.s.${lbl}:`)
+                    loadConst("r0", tmp)
                     write(`vmov ${dst}, r0`)
                 }
                 break

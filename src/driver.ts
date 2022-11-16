@@ -177,7 +177,7 @@ export function compileAndTest(m: tf.LayersModel, options: Options) {
             options.verbose = true
             cres = compileModelCore(m, options)
         }
-        console.log(cres.js)
+        //console.log(cres.js)
         console.log("Failing model: ", m.name)
         throw e
     }

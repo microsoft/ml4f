@@ -257,6 +257,14 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
             tf.layers.flatten(),
             tf.layers.dense({ units: 3, activation: "softmax" }),
         ],
+        depth0: [
+            tf.layers.inputLayer({ inputShape: [15, 1, 1] }),
+            tf.layers.depthwiseConv2d({ kernelSize: [5, 1], depthMultiplier: 4, strides: 1, useBias: false })
+        ],
+        depth1: [
+            tf.layers.inputLayer({ inputShape: [213, 1, 15] }),
+            tf.layers.depthwiseConv2d({ kernelSize: [10, 1], depthMultiplier: 4, strides: 2, useBias: false })
+        ]
     }
 }
 
