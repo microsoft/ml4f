@@ -204,7 +204,7 @@ function compileConv(info: LayerInfo) {
 
     for (let f = 0; f < config.filters; f++) {
         if (bias)
-            ir.addBias(mi, bias[f])
+            ir.addBias(mi, bias[f]) // ???
         for (let y = 0; y < kh; y++) {
             for (let x = 0; x < kw; x++)
                 for (let c = 0; c < inpch; ++c)
@@ -1048,10 +1048,7 @@ function mkRuntime(mem: Float32Array) {
     }
 }
 
-/**
- * Split model into single-layer models for testing.
- */
-export async function* partialModels(m: tf.LayersModel, opts: Options) {
+async function serializeModel(m: tf.LayersModel) {
     let mod: tf.io.ModelArtifacts
     await m.save({
         save: m => {
@@ -1066,6 +1063,14 @@ export async function* partialModels(m: tf.LayersModel, opts: Options) {
         }
     })
 
+    return mod
+}
+
+/**
+ * Split model into single-layer models for testing.
+ */
+export async function* partialModels(m: tf.LayersModel, opts: Options) {
+    const mod = await serializeModel(m)
     delete mod.weightData
     delete mod.weightSpecs
     const cfg = (mod.modelTopology as any)?.config
@@ -1093,5 +1098,26 @@ export async function* partialModels(m: tf.LayersModel, opts: Options) {
             console.log(`also with no activation...`)
             yield withoutAct
         }
+    }
+}
+
+export async function* prefixModels(m: tf.LayersModel, opts: Options) {
+    const mod = await serializeModel(m)
+
+    const cfg = (mod.modelTopology as any)?.config
+    const layersJson: any[] = cfg?.layers || []
+
+    for (let i = 0; i < m.layers.length; ++i) {
+        const layerJson = layersJson[i]
+        const layer = m.layers[i]
+        const info = getLayerInfo(layer)
+        if (layerJson?.class_name != layer.getClassName())
+            throw new Error("invalid serialization")
+        if (!isTestable(layer))
+            continue
+        cfg.layers = layersJson.slice(0, i + 1)
+        const copy = await tf.loadLayersModel({ load: () => Promise.resolve(mod) }, { strict: false })
+        console.log(`testing prefix ${layer.getClassName()} => ${shapeToString(info.outputShape)}...`)
+        yield copy
     }
 }

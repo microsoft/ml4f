@@ -2,7 +2,7 @@ import * as tf from '@tensorflow/tfjs'
 import { ThumbProcessor } from './thumb';
 import * as assembler from './assembler'
 import * as U from './util'
-import { assignLayerInfos, compileModelCore, CompileResult, LayerStats, partialModels, shapeElts } from './compiler';
+import { assignLayerInfos, compileModelCore, CompileResult, LayerStats, partialModels, prefixModels, shapeElts } from './compiler';
 import { Options } from './ir';
 
 const epsF32 = 0.00002
@@ -128,15 +128,17 @@ export async function compileModelAndFullValidate(m: tf.LayersModel, opts: Optio
 
     const optsPart = U.flatClone(opts)
     optsPart.includeTest = false
+
     console.log("Validating partial models...")
-    const iter = partialModels(m, optsPart)
-    while (true) {
-        const m = (await iter.next()).value
-        if (!m)
-            break
-        for (const l of m.layers)
+    for await (const mod of partialModels(m, optsPart)) {
+        for (const l of mod.layers)
             setRandomWeights(l)
-        compileAndTest(m, optsPart)
+        compileAndTest(mod, optsPart)
+    }
+
+    console.log("Validating prefix models...")
+    for await (const mod of prefixModels(m, optsPart)) {
+        compileAndTest(mod, optsPart)
     }
 
     console.log("Compiling full model...")
