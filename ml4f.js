@@ -3307,8 +3307,8 @@ ${indent(stringify(op.body))}}
     if (opts.verbose)
       console.log(modelInfo.stats);
     modelInfo.weightBuffer = modelInfo.weightBuffer.slice(0, modelInfo.weightPtr);
-    const js = `
-${stringifyComment(modelInfo.stats)}
+    const inputSize = shapeElts(getLayerInfo(m.layers[0]).rawInputShape);
+    let js = `
 ((weights, mkRuntime) => {
     "use strict";
     const weightOff = ${modelInfo.arenaSize}
@@ -3320,8 +3320,8 @@ ${stringifyComment(modelInfo.stats)}
     const rt = mkRuntime(mem)
     const { softmax, f32 } = rt
     return (inputs => {
-        if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).rawInputShape)})
-            throw new Error("invalid input size")
+        if (inputs.length != ${inputSize})
+            throw new Error("invalid input size; expected ${inputSize}, got " + inputs.length)
         mem.set(inputs, dataOff)
         let input, output, kernel
         let ${range(numTmpRegs).map((r) => "tmp" + r).join(", ")}
@@ -3334,6 +3334,16 @@ ${toJSs(modelInfo, flat)}
 })
 `;
     const execute = (0, eval)(js)(modelInfo.weightBuffer, mkRuntime);
+    js = `${stringifyComment(modelInfo.stats)}
+const modelFromWeights = ${js};
+`;
+    const w = Array.from(new Uint32Array(modelInfo.weightBuffer.buffer));
+    js += `const weights = new Uint8Array(new Uint32Array(${JSON.stringify(w)}).buffer);
+`;
+    js += `const modelFromRuntime = mkR => modelFromWeights(weights, mkR);
+`;
+    js += `return { weights, modelFromRuntime, modelFromWeights, inputSize: ${inputSize} };
+`;
     let thumb = "";
     if (opts.includeTest && opts.testOutput && opts.testOutputFromJS) {
       const prev = opts.testOutput;
@@ -3999,7 +4009,7 @@ ${toJSs(modelInfo, flat)}
     const procFile = mkProcessorFile();
     procFile.emit(src);
     throwAssemblerErrors(procFile);
-    const binary = new Uint8Array(procFile.buf.length << 1);
+    const binary = new Uint8Array((procFile.buf.length << 1) + 15 & ~15);
     for (let i = 0; i < procFile.buf.length; ++i) {
       binary[i << 1] = procFile.buf[i] & 255;
       binary[(i << 1) + 1] = procFile.buf[i] >> 8 & 255;
@@ -4209,6 +4219,21 @@ ${toJSs(modelInfo, flat)}
       model.weightSpecs = modelJSON.weightSpecs;
     }
     return model;
+  }
+  function toCSource(name, machineCode) {
+    if (machineCode.length & 3)
+      throw new Error();
+    const u32 = new Uint32Array(machineCode.buffer);
+    let r = `const unsigned ${name}[${u32.length}] = {
+`;
+    const chunk = 8;
+    for (let off = 0; off < u32.length; off += chunk) {
+      r += "    ";
+      r += Array.from(u32.slice(off, off + chunk)).map((n) => "0x" + ("00000000" + n.toString(16)).slice(-8) + ", ").join("");
+      r += "\n";
+    }
+    r += "};\n";
+    return r;
   }
 
   // src/testing.ts
@@ -4534,6 +4559,52 @@ ${toJSs(modelInfo, flat)}
       r += "\n";
     }
     return r;
+  }
+  function flatten2(d) {
+    const r = [];
+    if (Array.isArray(d)) {
+      for (const e of d) {
+        for (const q of flatten2(e)) {
+          r.push(q);
+        }
+      }
+    } else {
+      r.push(d);
+    }
+    return r;
+  }
+  function runModel(js, data) {
+    const { modelFromRuntime, inputSize } = new Function(js)();
+    const runModel2 = modelFromRuntime(mkRuntime);
+    const reqSize = inputSize;
+    let inputs = data.x ? data.x : data;
+    let outputs = data.y ? data.y : [];
+    if (Array.isArray(inputs) && flatten2(inputs[0]).length == reqSize) {
+      for (let i = 0; i < inputs.length; ++i) {
+        execModel(inputs[i], outputs[i]);
+      }
+    } else {
+      execModel(inputs, outputs);
+    }
+    function execModel(inp, exp) {
+      if (inp.length != reqSize) {
+        console.error(`bad input size - need ${reqSize} got ${inp.length}`);
+        return;
+      }
+      const res = runModel2(inp);
+      const max = argmax(res);
+      if (typeof exp == "number") {
+        if (max == exp) {
+          console.log("OK!", max);
+        } else {
+          const tmp = Array.from(res);
+          tmp.sort();
+          console.log(`got ${max} (${res[max]}), exp ${exp} (we have ${res[exp]}); median ${tmp[tmp.length >> 1]}`);
+        }
+      } else {
+        console.log(max);
+      }
+    }
   }
 })();
 //# sourceMappingURL=ml4f.js.map

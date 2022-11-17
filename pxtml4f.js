@@ -3799,8 +3799,8 @@ ${indent(stringify(op.body))}}
     if (opts.verbose)
       console.log(modelInfo.stats);
     modelInfo.weightBuffer = modelInfo.weightBuffer.slice(0, modelInfo.weightPtr);
-    const js = `
-${stringifyComment(modelInfo.stats)}
+    const inputSize = shapeElts(getLayerInfo(m.layers[0]).rawInputShape);
+    let js = `
 ((weights, mkRuntime) => {
     "use strict";
     const weightOff = ${modelInfo.arenaSize}
@@ -3812,8 +3812,8 @@ ${stringifyComment(modelInfo.stats)}
     const rt = mkRuntime(mem)
     const { softmax, f32 } = rt
     return (inputs => {
-        if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).rawInputShape)})
-            throw new Error("invalid input size")
+        if (inputs.length != ${inputSize})
+            throw new Error("invalid input size; expected ${inputSize}, got " + inputs.length)
         mem.set(inputs, dataOff)
         let input, output, kernel
         let ${range(numTmpRegs).map((r) => "tmp" + r).join(", ")}
@@ -3826,6 +3826,16 @@ ${toJSs(modelInfo, flat)}
 })
 `;
     const execute = (0, eval)(js)(modelInfo.weightBuffer, mkRuntime);
+    js = `${stringifyComment(modelInfo.stats)}
+const modelFromWeights = ${js};
+`;
+    const w = Array.from(new Uint32Array(modelInfo.weightBuffer.buffer));
+    js += `const weights = new Uint8Array(new Uint32Array(${JSON.stringify(w)}).buffer);
+`;
+    js += `const modelFromRuntime = mkR => modelFromWeights(weights, mkR);
+`;
+    js += `return { weights, modelFromRuntime, modelFromWeights, inputSize: ${inputSize} };
+`;
     let thumb = "";
     if (opts.includeTest && opts.testOutput && opts.testOutputFromJS) {
       const prev = opts.testOutput;
@@ -3937,7 +3947,7 @@ ${toJSs(modelInfo, flat)}
     const procFile = mkProcessorFile();
     procFile.emit(src);
     throwAssemblerErrors(procFile);
-    const binary = new Uint8Array(procFile.buf.length << 1);
+    const binary = new Uint8Array((procFile.buf.length << 1) + 15 & ~15);
     for (let i = 0; i < procFile.buf.length; ++i) {
       binary[i << 1] = procFile.buf[i] & 255;
       binary[(i << 1) + 1] = procFile.buf[i] >> 8 & 255;
