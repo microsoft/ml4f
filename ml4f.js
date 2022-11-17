@@ -1498,6 +1498,18 @@
     PERFORMANCE OF THIS SOFTWARE.
     ***************************************************************************** */
 
+    function __values(o) {
+        var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+        if (m) return m.call(o);
+        if (o && typeof o.length === "number") return {
+            next: function () {
+                if (o && i >= o.length) o = void 0;
+                return { value: o && o[i++], done: !o };
+            }
+        };
+        throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+    }
+
     function __await(v) {
         return this instanceof __await ? (this.v = v, this) : new __await(v);
     }
@@ -1512,6 +1524,14 @@
         function fulfill(value) { resume("next", value); }
         function reject(value) { resume("throw", value); }
         function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
+    }
+
+    function __asyncValues(o) {
+        if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+        var m = o[Symbol.asyncIterator], i;
+        return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function () { return this; }, i);
+        function verb(n) { i[n] = o[n] && function (v) { return new Promise(function (resolve, reject) { v = o[n](v), settle(resolve, reject, v.done, v.value); }); }; }
+        function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
     }
 
     const asmDeps = {
@@ -1784,7 +1804,7 @@ softmax:
                     else if (op.num == 1)
                         cycles += 1;
                     else
-                        cycles += 4; // ??
+                        cycles += 6; // ??
                     break;
                 case OpCode.load:
                     cycles += 1 + op.num;
@@ -1973,12 +1993,22 @@ _header:
             // TODO?
             if (num <= 0xff && isLowReg(dst))
                 write(`movs ${dst}, #${num}`);
-            else
+            else if (num <= 0xffff)
                 write(`movw ${dst}, #${num}`);
+            else {
+                const lbl = `${lblid++}`;
+                write(`ldr ${dst}, .c.${lbl}`);
+                write(`b .s.${lbl}`);
+                write(`.balign 4`);
+                write(`.c.${lbl}: .word ${num}`);
+                write(`.s.${lbl}:`);
+            }
         }
         function addConst(dst, src, num) {
             if (Math.abs(num) < (1 << 12)) {
-                if (num < 0)
+                if (num == 0)
+                    write(`mov ${dst}, ${src}`);
+                else if (num < 0)
                     write(`subw ${dst}, ${src}, #${-num}`);
                 else
                     write(`addw ${dst}, ${src}, #${num}`);
@@ -2086,8 +2116,11 @@ _header:
                         write(`lsls r0, r0, #16`);
                         write(`vmov ${dst}, r0`);
                     }
-                    else
-                        write(`vmov ${dst}, #${op.num}e+0`);
+                    else {
+                        const tmp = float32ToUInt32(op.num);
+                        loadConst("r0", tmp);
+                        write(`vmov ${dst}, r0`);
+                    }
                     break;
                 case OpCode.load:
                     assert$1(op.f16Mode != F16Mode.On);
@@ -2304,6 +2337,13 @@ _header:
             opcode: OpCode.loadFConst,
             dst,
             num: 0.0
+        };
+    }
+    function loadLit(dst, num) {
+        return {
+            opcode: OpCode.loadFConst,
+            dst,
+            num
         };
     }
     function loadMInf(dst) {
@@ -2617,16 +2657,22 @@ _header:
     const compilers = {
         Conv2D: { compile: compileConv, computePaddedInputShape: paddingConv },
         Conv1D: { compile: compileConv, computePaddedInputShape: paddingConv },
+        DepthwiseConv2D: { compile: compileDepthConv, computePaddedInputShape: paddingConv },
+        DepthwiseConv1D: { compile: compileDepthConv, computePaddedInputShape: paddingConv },
         MaxPooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
         MaxPooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool, needsMInfPadding: true },
+        AveragePooling1D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
+        AveragePooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
         Dense: { compile: compileDense },
+        Activation: { compile: compileActivation, inPlace: true },
+        BatchNormalization: { compile: compileBatchNorm, inPlace: true },
         Dropout: {},
         Flatten: {},
         InputLayer: {},
         Reshape: {},
     };
     const numFPRegs = 32;
-    const numTmpRegs = 8;
+    const numTmpRegs = 6; // ??
     function unsupported(msg) {
         debugger;
         throw new Error("Unsupported operator or config: " + msg);
@@ -2683,8 +2729,9 @@ _header:
         for (let i = 1; i <= config.kernelSize.length; ++i) {
             const str = config.strides[i - 1];
             const tmp = info.outputShape[i] * str + config.kernelSize[i - 1] - str;
-            assert$2(tmp >= res[i]);
-            res[i] = tmp;
+            assert$2(tmp + str - 1 >= res[i], `${tmp} >= ${res[i]}`);
+            if (tmp > res[i])
+                res[i] = tmp;
         }
         return res;
     }
@@ -2730,7 +2777,7 @@ _header:
         const bias = config.useBias ? info.layer.weights[1].read().arraySync() : null;
         for (let f = 0; f < config.filters; f++) {
             if (bias)
-                addBias(mi, bias[f]);
+                addBias(mi, bias[f]); // ???
             for (let y = 0; y < kh; y++) {
                 for (let x = 0; x < kw; x++)
                     for (let c = 0; c < inpch; ++c)
@@ -2786,10 +2833,129 @@ _header:
         addActivation(res, info);
         return res;
     }
+    function compileDepthConv(info) {
+        const config = info.layer.getConfig();
+        const flashRegOff = 2;
+        const flashRegs = numFPRegs - flashRegOff;
+        validateConfig(info);
+        const is2D = config.kernelSize.length == 2;
+        const weights0 = info.layer.weights[0].read().arraySync();
+        const weights = (is2D ? weights0 : [weights0]);
+        const fix1D = (a) => {
+            a = a.slice();
+            if (!is2D)
+                a.unshift(1);
+            return a;
+        };
+        const [kh, kw] = fix1D(config.kernelSize);
+        const [strh, strw] = fix1D(config.strides);
+        const [inph, inpw, inpch] = fix1D(info.inputShape.slice(1));
+        const [outh, outw, outch] = fix1D(info.outputShape.slice(1));
+        assert$2(kh <= inph, "KH2");
+        assert$2(kw <= inpw, "KW2");
+        assert$2(weights.length == kh, "KH");
+        assert$2(weights[0].length == kw, "KW");
+        assert$2(weights[0][0].length == inpch, "CH");
+        assert$2(weights[0][0][0].length == config.depthMultiplier, "F");
+        assert$2(outch == config.depthMultiplier * inpch, "FF");
+        const mi = info.model;
+        const weightsIdx = weightOffset(mi);
+        const bias = config.useBias ? info.layer.weights[1].read().arraySync() : null;
+        if (bias)
+            unsupported("bias in depthwise");
+        /*
+    output[i, j, k * channel_multiplier + q] =
+        sum_{di, dj}
+               input[strides[1] * i + di,
+                     strides[2] * j + dj, k] *
+               filter[di, dj, k, q]
+
+    for q up to channel_mult
+      for k up to num_ch
+        num_ch*chmult==outch
+        F = load filter k,q
+        for i, j
+          op = &output[i,j,k*chmult+q]
+          *op = 0
+          for di, dj
+            *op += filter[di,dj,k,q]
+               */
+        for (let q = 0; q < config.depthMultiplier; q++) {
+            if (bias)
+                addBias(mi, bias[q]); // ???
+            for (let k = 0; k < inpch; ++k) {
+                for (let y = 0; y < kh; y++) {
+                    for (let x = 0; x < kw; x++)
+                        addWeight(mi, weights[y][x][k][q]);
+                }
+                alignWeights(mi);
+            }
+        }
+        const res = [
+            loadWeightAddr(Reg.KernelPtr, weightsIdx),
+            repeatIdx(config.depthMultiplier, q => [repeatIdx(inpch, k => {
+                    const res = [];
+                    const setOutput = (res) => {
+                        res.push(loadDataAddr(Reg.OutputPtr, info.outputOff));
+                        res.push(addPtr(Reg.OutputPtr, k, config.depthMultiplier));
+                        res.push(addPtr(Reg.OutputPtr, q));
+                    };
+                    setOutput(res);
+                    if (config.useBias)
+                        res.push(load(Reg.S0, 1, Reg.KernelPtr, true));
+                    else
+                        res.push(load0(Reg.S0));
+                    res.push(repeat(outw * outh, () => [
+                        store(Reg.OutputPtr, Reg.S0, 1, false),
+                        addPtr(Reg.OutputPtr, null, outch)
+                    ]));
+                    const kernSz = kh * kw;
+                    let skipAcc = 0;
+                    const skipAfter = (kernOff) => {
+                        const r = (kernOff % kw == kw - 1 ? inpw - kw + 1 : 1) * inpch;
+                        skipAcc += r;
+                        return r;
+                    };
+                    let chunk = 0;
+                    for (let kernOff = 0; kernOff < kernSz; kernOff += chunk) {
+                        chunk = kernSz - kernOff;
+                        if (chunk > flashRegs)
+                            chunk = flashRegs;
+                        res.push(loadWeight(mi, flashRegOff, chunk));
+                        let skip = 0;
+                        for (let i = 0; i < kernOff; ++i)
+                            skip += skipAfter(i);
+                        res.push(loadDataAddr(Reg.InputPtr, info.inputOff + skip), addPtr(Reg.InputPtr, k));
+                        setOutput(res);
+                        const wSkip = strw * inpch;
+                        const hSkip = strh * inpw * inpch;
+                        res.push(repeat(outh, () => [repeat(outw, () => {
+                                skipAcc = 0;
+                                const tmp = flatten(load0(Reg.S1), range(chunk).map(i => [
+                                    load(Reg.S0, 1, Reg.InputPtr, false),
+                                    addPtr(Reg.InputPtr, null, skipAfter(kernOff + i)),
+                                    vmul(Reg.S0, Reg.S0, i + flashRegOff),
+                                    vadd(Reg.S1, Reg.S1, Reg.S0),
+                                ]), load(Reg.S0, 1, Reg.OutputPtr, false), vadd(Reg.S0, Reg.S0, Reg.S1), store(Reg.OutputPtr, Reg.S0, 1, false), addPtr(Reg.OutputPtr, null, outch));
+                                tmp.push(addPtr(Reg.InputPtr, null, wSkip - skipAcc));
+                                return tmp;
+                            }),
+                            addPtr(Reg.InputPtr, null, hSkip - outw * wSkip)]));
+                    }
+                    res.push(relaxWeights());
+                    return res;
+                })])
+        ];
+        addActivation(res, info);
+        return res;
+    }
     function compileMaxPooling(info) {
         const config = info.layer.getConfig();
         const is2D = config.poolSize.length == 2;
+        const isAvg = info.layer.getClassName().startsWith("Average");
         validateConfig(info);
+        if (isAvg && config.padding != "valid")
+            unsupported("only 'valid' padding supported for AvgPool");
         const fix1D = (a) => {
             a = a.slice();
             if (!is2D)
@@ -2804,8 +2970,7 @@ _header:
         assert$2(kh <= inph, "KH2");
         assert$2(kw <= inpw, "KW2");
         assert$2(numch == outch, "CH");
-        if (kh - 1 > numTmpRegs)
-            unsupported(`too high MaxPool2D area`);
+        const singleInputPtr = kh - 1 > numTmpRegs;
         const lineW = inpw * numch;
         return [
             repeatIdx(numch, filt => {
@@ -2815,30 +2980,100 @@ _header:
                     loadDataAddr(Reg.InputPtr, info.inputOff),
                     addPtr(Reg.InputPtr, filt),
                 ];
-                const ptrRegs = range(kh - 1).map(i => Reg.Tmp0 + i);
+                const ptrRegs = singleInputPtr ? [] : range(kh - 1).map(i => Reg.Tmp0 + i);
                 ptrRegs.unshift(Reg.InputPtr);
-                for (let i = 1; i < kh; ++i) {
-                    const op = addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr);
-                    op.isDef = true;
-                    res.push(op);
-                }
+                if (!singleInputPtr)
+                    for (let i = 1; i < kh; ++i) {
+                        const op = addPtr(ptrRegs[i], null, lineW * i, Reg.InputPtr);
+                        op.isDef = true;
+                        res.push(op);
+                    }
                 res.push(repeat(outh, () => flatten(repeat(outw, () => {
                     const res = [];
                     for (let i = 0; i < kh; ++i) {
+                        let preg = ptrRegs[i];
+                        if (singleInputPtr) {
+                            preg = Reg.Tmp0;
+                            const op = addPtr(preg, null, lineW * i, Reg.InputPtr);
+                            if (i == 0)
+                                op.isDef = true;
+                            res.push(op);
+                        }
                         for (let j = 0; j < kw; ++j) {
                             const reg = i == 0 && j == 0 ? Reg.S0 : Reg.S1;
-                            res.push(load(reg, 1, ptrRegs[i], true), addPtr(ptrRegs[i], null, numch - 1));
-                            if (reg != Reg.S0)
-                                res.push(vmax(Reg.S0, Reg.S0, reg));
+                            res.push(load(reg, 1, preg, true), addPtr(preg, null, numch - 1));
+                            if (reg != Reg.S0) {
+                                if (isAvg)
+                                    res.push(vadd(Reg.S0, Reg.S0, reg));
+                                else
+                                    res.push(vmax(Reg.S0, Reg.S0, reg));
+                            }
                         }
-                        res.push(addPtr(ptrRegs[i], null, (strw - kw) * numch));
+                        if (!singleInputPtr)
+                            res.push(addPtr(preg, null, (strw - kw) * numch));
                     }
+                    if (isAvg)
+                        res.push(loadLit(Reg.S1, 1 / (kw * kh)), vmul(Reg.S0, Reg.S0, Reg.S1));
                     res.push(store(Reg.OutputPtr, Reg.S0, 1, true), addPtr(Reg.OutputPtr, null, numch - 1));
+                    if (singleInputPtr)
+                        res.push(addPtr(Reg.InputPtr, null, strw * numch));
                     return res;
                 }), ptrRegs.map(r => addPtr(r, null, strh * lineW - outw * strw * numch)))));
                 return res;
             })
         ];
+    }
+    function compileBatchNorm(info) {
+        const config = info.layer.getConfig();
+        const flashRegs = numFPRegs - 2;
+        const flashReg0 = Reg.S0 + 2;
+        if (info.inputShape.length != 4)
+            unsupported("inputShape: " + info.inputShape.length);
+        if (config.dtype && config.dtype != "float32")
+            unsupported("dtype: " + config.dtype);
+        const [_null, outh, outw, numch] = info.inputShape;
+        function readVar(name) {
+            const r = info.layer.weights.find(w => w.originalName.endsWith("/" + name)).read().arraySync();
+            assert$2(r.length == numch);
+            return r;
+        }
+        const gamma = readVar("gamma");
+        const beta = readVar("beta");
+        const movingMean = readVar("moving_mean");
+        const movingVar = readVar("moving_variance");
+        // gamma * (batch - moving_mean) / sqrt(moving_var+epsilon) + beta
+        // Q = 1/sqrt(moving_var+epsilon)
+        // Q * gamma * (batch - moving_mean) + beta
+        // Q * gamma * batch - Q * gamma * moving_mean + beta
+        const mi = info.model;
+        const weightsIdx = weightOffset(mi);
+        for (let i = 0; i < numch; i++) {
+            const q = 1 / Math.sqrt(movingVar[i] + config.epsilon);
+            const mult = q * gamma[i];
+            const offset = -q * gamma[i] * movingMean[i] + beta[i];
+            // console.log({ e: config.epsilon, mv: movingVar[i], q, mult, offset })
+            addWeight(mi, mult);
+            addWeight(mi, offset);
+        }
+        assert$2(info.inputOff == info.outputOff);
+        const res = [
+            loadWeightAddr(Reg.KernelPtr, weightsIdx),
+        ];
+        const kernSz = numch * 2;
+        let chunk = 0;
+        for (let kernOff = 0; kernOff < kernSz; kernOff += chunk) {
+            assert$2((kernOff & 1) == 0);
+            chunk = kernSz - kernOff;
+            if (chunk > flashRegs)
+                chunk = flashRegs;
+            res.push(loadWeight(mi, flashReg0, chunk), loadDataAddr(Reg.OutputPtr, info.outputOff + (kernOff >> 1)), repeat(outh * outw, () => flatten(range(chunk >> 1).map(i => [
+                load(Reg.S0, 1, Reg.OutputPtr, false),
+                vmul(Reg.S0, Reg.S0, (i * 2) + flashReg0),
+                vadd(Reg.S0, Reg.S0, (i * 2) + 1 + flashReg0),
+                store(Reg.OutputPtr, Reg.S0, 1, true),
+            ]), addPtr(Reg.OutputPtr, null, numch - (chunk >> 1)))));
+        }
+        return res;
     }
     function compileDense(info) {
         const config = info.layer.getConfig();
@@ -2893,6 +3128,11 @@ _header:
                 return res;
             })
         ];
+        addActivation(res, info);
+        return res;
+    }
+    function compileActivation(info) {
+        const res = [];
         addActivation(res, info);
         return res;
     }
@@ -3155,8 +3395,10 @@ _header:
                     console.log(infostr + " " + tmp.optinfo);
                 ops.push(tmp.opcodes);
             }
-            else
+            else {
+                console.log(l.getConfig());
                 unsupported("layer: " + l.getClassName());
+            }
             if (info.stats.unoptimizedCycles)
                 info.stats.arenaBytes = Math.max(info.stats.arenaBytes, (shapeElts(info.inputShape) + shapeElts(info.outputShape)) << 2);
             totalStats.unoptimizedCycles += info.stats.unoptimizedCycles;
@@ -3165,8 +3407,9 @@ _header:
         let flat = flatten(ops);
         const lastInfo = getLayerInfo(m.layers[m.layers.length - 1]);
         modelInfo.outputOffset = lastInfo.outputOff;
+        const mhz = 64;
         const cycles = numCycles(flat);
-        const cycleinfo = `total cycles: ${cycles} (${(cycles / 84000).toFixed(3)}ms at 84MHz)`;
+        const cycleinfo = `total cycles: ${cycles} (${(cycles / (mhz * 1000)).toFixed(3)}ms at ${mhz}MHz)`;
         modelInfo.stats = cycleinfo;
         totalStats.optimizedCycles = cycles;
         if (opts.verbose)
@@ -3248,25 +3491,29 @@ ${toJSs(modelInfo, flat)}
             vcvtt_f32_f16: (v) => float16AsUintToFloat((v >> 16) & 0xffff),
         };
     }
+    async function serializeModel(m) {
+        let mod;
+        await m.save({
+            save: m => {
+                mod = m;
+                const res = {
+                    modelArtifactsInfo: {
+                        dateSaved: new Date(),
+                        modelTopologyType: "JSON"
+                    }
+                };
+                return Promise.resolve(res);
+            }
+        });
+        return mod;
+    }
     /**
      * Split model into single-layer models for testing.
      */
     function partialModels(m, opts) {
         var _a;
         return __asyncGenerator(this, arguments, function* partialModels_1() {
-            let mod;
-            yield __await(m.save({
-                save: m => {
-                    mod = m;
-                    const res = {
-                        modelArtifactsInfo: {
-                            dateSaved: new Date(),
-                            modelTopologyType: "JSON"
-                        }
-                    };
-                    return Promise.resolve(res);
-                }
-            }));
+            const mod = yield __await(serializeModel(m));
             delete mod.weightData;
             delete mod.weightSpecs;
             const cfg = (_a = mod.modelTopology) === null || _a === void 0 ? void 0 : _a.config;
@@ -3287,12 +3534,33 @@ ${toJSs(modelInfo, flat)}
                 yield yield __await(copy);
                 layerJson.config.batch_input_shape = info.rawInputShape;
                 // also test it without activation
-                if (lcfg.activation) {
+                if (lcfg.activation && lcfg.activation != "linear") {
                     lcfg.activation = null;
                     const withoutAct = yield __await(tf.loadLayersModel({ load: () => Promise.resolve(mod) }));
                     console.log(`also with no activation...`);
                     yield yield __await(withoutAct);
                 }
+            }
+        });
+    }
+    function prefixModels(m, opts) {
+        var _a;
+        return __asyncGenerator(this, arguments, function* prefixModels_1() {
+            const mod = yield __await(serializeModel(m));
+            const cfg = (_a = mod.modelTopology) === null || _a === void 0 ? void 0 : _a.config;
+            const layersJson = (cfg === null || cfg === void 0 ? void 0 : cfg.layers) || [];
+            for (let i = 0; i < m.layers.length; ++i) {
+                const layerJson = layersJson[i];
+                const layer = m.layers[i];
+                const info = getLayerInfo(layer);
+                if ((layerJson === null || layerJson === void 0 ? void 0 : layerJson.class_name) != layer.getClassName())
+                    throw new Error("invalid serialization");
+                if (!isTestable(layer))
+                    continue;
+                cfg.layers = layersJson.slice(0, i + 1);
+                const copy = yield __await(tf.loadLayersModel({ load: () => Promise.resolve(mod) }, { strict: false }));
+                console.log(`testing prefix ${layer.getClassName()} => ${shapeToString(info.outputShape)}...`);
+                yield yield __await(copy);
             }
         });
     }
@@ -3970,7 +4238,7 @@ ${toJSs(modelInfo, flat)}
     }
 
     const epsF32 = 0.00002;
-    const epsF16 = 0.0045;
+    const epsF16 = 0.01;
     function mkProcessorFile() {
         const b = new File(new ThumbProcessor());
         b.ei.testAssembler(); // just in case
@@ -4001,10 +4269,18 @@ ${toJSs(modelInfo, flat)}
         const num = shapeElts(shape);
         return tf.tidy(() => tf.tensor(range(num).map(_ => mult * randomSFloat())).reshape(shape));
     }
+    function randomPosTensor(shape, mult = 1) {
+        shape = shape.map(s => s == null ? 1 : s);
+        const num = shapeElts(shape);
+        return tf.tidy(() => tf.tensor(range(num).map(_ => mult * randomUFloat())).reshape(shape));
+    }
     function setRandomWeights(l) {
         for (const w of l.weights) {
             const mult = 1;
-            w.write(randomTensor(w.shape, mult));
+            if (w.originalName.endsWith("/moving_variance"))
+                w.write(randomPosTensor(w.shape, mult));
+            else
+                w.write(randomTensor(w.shape, mult));
         }
     }
     function isNear(a, b, eps) {
@@ -4064,18 +4340,39 @@ ${toJSs(modelInfo, flat)}
         return cres;
     }
     async function compileModelAndFullValidate(m, opts) {
+        var e_1, _a, e_2, _b;
         assignLayerInfos(m, opts);
         const optsPart = flatClone(opts);
         optsPart.includeTest = false;
         console.log("Validating partial models...");
-        const iter = partialModels(m, optsPart);
-        while (true) {
-            const m = (await iter.next()).value;
-            if (!m)
-                break;
-            for (const l of m.layers)
-                setRandomWeights(l);
-            compileAndTest(m, optsPart);
+        try {
+            for (var _c = __asyncValues(partialModels(m, optsPart)), _d; _d = await _c.next(), !_d.done;) {
+                const mod = _d.value;
+                for (const l of mod.layers)
+                    setRandomWeights(l);
+                compileAndTest(mod, optsPart);
+            }
+        }
+        catch (e_1_1) { e_1 = { error: e_1_1 }; }
+        finally {
+            try {
+                if (_d && !_d.done && (_a = _c.return)) await _a.call(_c);
+            }
+            finally { if (e_1) throw e_1.error; }
+        }
+        console.log("Validating prefix models...");
+        try {
+            for (var _e = __asyncValues(prefixModels(m, optsPart)), _f; _f = await _e.next(), !_f.done;) {
+                const mod = _f.value;
+                compileAndTest(mod, optsPart);
+            }
+        }
+        catch (e_2_1) { e_2 = { error: e_2_1 }; }
+        finally {
+            try {
+                if (_f && !_f.done && (_b = _e.return)) await _b.call(_e);
+            }
+            finally { if (e_2) throw e_2.error; }
         }
         console.log("Compiling full model...");
         // also test the top-level one again
@@ -4388,6 +4685,46 @@ ${toJSs(modelInfo, flat)}
                     activation: "softmax",
                 })
             ],
+            avgPool: [
+                tf.layers.inputLayer({ inputShape: [150] }),
+                tf.layers.reshape({ targetShape: [50, 3, 1] }),
+                tf.layers.conv2d({ filters: 16, kernelSize: 4, strides: 1, padding: "same", activation: "relu" }),
+                tf.layers.avgPooling2d({ poolSize: 2, strides: 2, padding: "valid" }),
+                tf.layers.flatten(),
+                tf.layers.dense({ units: 3, activation: "softmax" }),
+            ],
+            avgPool2: [
+                tf.layers.inputLayer({ inputShape: [150] }),
+                tf.layers.reshape({ targetShape: [50, 3, 1] }),
+                tf.layers.conv2d({ filters: 16, kernelSize: 4, strides: 1, padding: "same", activation: "relu" }),
+                tf.layers.avgPooling2d({ poolSize: [2, 1], strides: [2, 1], padding: "valid" }),
+                tf.layers.flatten(),
+                tf.layers.dense({ units: 3, activation: "softmax" }),
+            ],
+            avgPool3: [
+                tf.layers.inputLayer({ inputShape: [150] }),
+                tf.layers.reshape({ targetShape: [50, 3, 1] }),
+                // tf.layers.conv2d({ filters: 16, kernelSize: 4, strides: 1, padding: "same", activation: "relu" }),
+                tf.layers.avgPooling2d({ poolSize: [8, 1], strides: [2, 1], padding: "valid" }),
+                tf.layers.flatten(),
+                tf.layers.dense({ units: 3, activation: "softmax" }),
+            ],
+            depth0: [
+                tf.layers.inputLayer({ inputShape: [15, 1, 1] }),
+                tf.layers.depthwiseConv2d({ kernelSize: [5, 1], depthMultiplier: 4, strides: 1, useBias: false })
+            ],
+            depth1: [
+                tf.layers.inputLayer({ inputShape: [213, 1, 15] }),
+                tf.layers.depthwiseConv2d({ kernelSize: [10, 1], depthMultiplier: 4, strides: 2, useBias: false })
+            ],
+            batch1: [
+                tf.layers.inputLayer({ inputShape: [213, 1, 15] }),
+                tf.layers.batchNormalization({})
+            ],
+            batch2: [
+                tf.layers.inputLayer({ inputShape: [213, 1, 100] }),
+                tf.layers.batchNormalization({})
+            ]
         };
     }
     let _models;
@@ -4513,6 +4850,7 @@ ${toJSs(modelInfo, flat)}
     exports.oops = oops;
     exports.optionsWithTestData = optionsWithTestData;
     exports.partialModels = partialModels;
+    exports.prefixModels = prefixModels;
     exports.pushRange = pushRange;
     exports.randomInclusive = randomInclusive;
     exports.randomPermute = randomPermute;
