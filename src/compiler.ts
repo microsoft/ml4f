@@ -1040,8 +1040,9 @@ export function compileModelCore(m: tf.LayersModel, opts: ir.Options) {
 
     modelInfo.weightBuffer = modelInfo.weightBuffer.slice(0, modelInfo.weightPtr)
 
-    const js = `
-${ir.stringifyComment(modelInfo.stats)}
+    const inputSize = shapeElts(getLayerInfo(m.layers[0]).rawInputShape)
+
+    let js = `
 ((weights, mkRuntime) => {
     "use strict";
     const weightOff = ${modelInfo.arenaSize}
@@ -1053,8 +1054,8 @@ ${ir.stringifyComment(modelInfo.stats)}
     const rt = mkRuntime(mem)
     const { softmax, f32 } = rt
     return (inputs => {
-        if (inputs.length != ${shapeElts(getLayerInfo(m.layers[0]).rawInputShape)})
-            throw new Error("invalid input size")
+        if (inputs.length != ${inputSize})
+            throw new Error("invalid input size; expected ${inputSize}, got " + inputs.length)
         mem.set(inputs, dataOff)
         let input, output, kernel
         let ${U.range(numTmpRegs).map(r => "tmp" + r).join(", ")}
@@ -1068,6 +1069,13 @@ ${ir.toJSs(modelInfo, flat)}
 `
 
     const execute = ((0, eval)(js))(modelInfo.weightBuffer, mkRuntime)
+
+    js = `${ir.stringifyComment(modelInfo.stats)}\nconst modelFromWeights = ${js};\n`
+
+    const w = Array.from(new Uint32Array(modelInfo.weightBuffer.buffer))
+    js += `const weights = new Uint8Array(new Uint32Array(${JSON.stringify(w)}).buffer);\n`
+    js += `const modelFromRuntime = mkR => modelFromWeights(weights, mkR);\n`
+    js += `return { weights, modelFromRuntime, modelFromWeights, inputSize: ${inputSize} };\n`
 
     let thumb = ""
     if (opts.includeTest && opts.testOutput && opts.testOutputFromJS) {

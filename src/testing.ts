@@ -3,6 +3,7 @@ import * as U from './util'
 import { CompileResult, Options } from './compiler';
 import { compileAndTest, compileModelAndFullValidate, setRandomWeights } from './driver';
 import { testFloatConv } from './float16';
+import { mkRuntime } from './runtime';
 
 
 function randomModel() {
@@ -267,11 +268,11 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
         ],
         batch1: [
             tf.layers.inputLayer({ inputShape: [213, 1, 15] }),
-            tf.layers.batchNormalization({ })
+            tf.layers.batchNormalization({})
         ],
         batch2: [
             tf.layers.inputLayer({ inputShape: [213, 1, 100] }),
-            tf.layers.batchNormalization({ })
+            tf.layers.batchNormalization({})
         ]
     }
 }
@@ -377,4 +378,55 @@ export function evalModel(cres: CompileResult, data: EvalData) {
     }
 
     return r
+}
+
+function flatten(d: any): number[] {
+    const r: number[] = []
+    if (Array.isArray(d)) {
+        for (const e of d) {
+            for (const q of flatten(e)) {
+                r.push(q)
+            }
+        }
+    } else {
+        r.push(d)
+    }
+    return r
+}
+
+export function runModel(js: string, data: any) {
+    const { modelFromRuntime, inputSize } = new Function(js)()
+    const runModel: (inp: number[]) => Float32Array = modelFromRuntime(mkRuntime)
+    const reqSize: number = inputSize
+
+    let inputs = data.x ? data.x : data
+    let outputs = data.y ? data.y : []
+
+    if (Array.isArray(inputs) && flatten(inputs[0]).length == reqSize) {
+        for (let i = 0; i < inputs.length; ++i) {
+            execModel(inputs[i], outputs[i])
+        }
+    } else {
+        execModel(inputs, outputs)
+    }
+
+    function execModel(inp: number[], exp: any) {
+        if (inp.length != reqSize) {
+            console.error(`bad input size - need ${reqSize} got ${inp.length}`)
+            return
+        }
+        const res = runModel(inp)
+        const max = argmax(res)
+        if (typeof exp == "number") {
+            if (max == exp) {
+                console.log("OK!", max)
+            } else {
+                const tmp = Array.from(res)
+                tmp.sort()
+                console.log(`got ${max} (${res[max]}), exp ${exp} (we have ${res[exp]}); median ${tmp[tmp.length >> 1]}`)
+            }
+        } else {
+            console.log(max)
+        }
+    }
 }

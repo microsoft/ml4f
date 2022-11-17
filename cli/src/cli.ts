@@ -8,7 +8,7 @@ import {
     evalModel,
     loadFlatJSONModel,
     loadTfjsModelJSON,
-    Options, sampleModel, testAllModels,
+    Options, runModel, sampleModel, testAllModels,
     testFloatConv
 } from '../../src/main'
 
@@ -19,6 +19,7 @@ interface CmdOptions {
     validate?: boolean
     testData?: boolean
     sampleModel?: string
+    loadJs?: string
     selfTest?: boolean
     optimize?: boolean
     float16?: boolean
@@ -201,6 +202,7 @@ export async function mainCli() {
         .option("-o, --output <folder>", "path to store compilation results (default: 'built')")
         .option("-b, --basename <name>", "basename of model files (default: 'model')")
         .option("-f, --force", "force compilation even if certain errors are detected")
+        .option("-j, --load-js <model.js>", "load compiled model in JavaScript format")
         .arguments("<model>")
         .parse(process.argv)
 
@@ -214,6 +216,17 @@ export async function mainCli() {
         const opts = getCompileOptions()
         opts.includeTest = false
         await testAllModels(opts)
+        process.exit(0)
+    }
+
+    if (options.loadJs) {
+        if (!options.eval) {
+            console.error(`--eval is required with --load-js`)
+            process.exit(1)
+        }
+        const js = fs.readFileSync(options.loadJs, "utf-8")
+        const data = JSON.parse(fs.readFileSync(options.eval, "utf8"))
+        runModel(js, data)
         process.exit(0)
     }
 
