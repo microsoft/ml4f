@@ -3,29 +3,24 @@
   "version": "1.6.0",
   "description": "",
   "scripts": {
-    "prepare": "node node_modules/rollup/dist/bin/rollup -c rollup.config.ts && node node_modules/typescript/bin/tsc --project cli",
+    "prepare": "node build",
     "test": "node ml4f --self-test",
-    "watch-cli": "node node_modules/typescript/bin/tsc --watch --project cli",
-    "watch": "node node_modules/rollup/dist/bin/rollup -c rollup.config.ts -w"
+    "watch": "node build --watch"
   },
   "author": "",
   "license": "MIT",
   "bin": "./ml4f",
   "types": "./built/ml4f.d.ts",
-  "main": "./built/ml4f.js",
-  "module": "./built/ml4f.cjs",
+  "main": "./built/ml4f.cjs",
+  "browser": "./built/ml4f.js",
   "files": [
-    "built/ml4f*.js",
+    "built/ml4f.*js",
+    "built/pxtml4f.*js",
     "built/ml4f.d.ts",
-    "built/cli/cli.js"
+    "built/cli.cjs"
   ],
   "devDependencies": {
-    "rollup": "^2.26.4",
-    "rollup-plugin-commonjs": "^10.1.0",
-    "rollup-plugin-dts": "^1.4.13",
-    "rollup-plugin-json": "^4.0.0",
-    "rollup-plugin-sourcemaps": "^0.6.2",
-    "rollup-plugin-typescript2": "^0.27.2",
+    "esbuild": "^0.15.14",
     "typescript": "^4.3.2"
   },
   "dependencies": {

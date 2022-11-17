@@ -1,2 +1,2 @@
 #!/usr/bin/env node
-require('./built/cli/cli.js').mainCli()
+require('./built/cli.cjs').mainCli()

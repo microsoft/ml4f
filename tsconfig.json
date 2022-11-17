@@ -18,6 +18,7 @@
     "noImplicitReturns": true,
     "outDir": "built",
     "newLine": "LF",
+    "noEmit": true,
     "typeRoots": [
       "node_modules/@types"
     ]

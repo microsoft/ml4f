@@ -10,7 +10,7 @@ import {
     loadTfjsModelJSON,
     Options, sampleModel, testAllModels,
     testFloatConv
-} from '../..'
+} from '../../src/main'
 
 interface CmdOptions {
     debug?: boolean
