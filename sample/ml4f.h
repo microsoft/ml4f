@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define ML4F_TYPE_FLOAT32 1
 
 #define ML4F_MAGIC0 0x30470f62
@@ -37,6 +41,13 @@ const uint32_t *ml4f_input_shape(const ml4f_header_t *model);
 const uint32_t *ml4f_output_shape(const ml4f_header_t *model);
 uint32_t ml4f_shape_elements(const uint32_t *shape);
 uint32_t ml4f_shape_size(const uint32_t *shape, uint32_t type);
+int ml4f_argmax(float *data, uint32_t size);
+
 int ml4f_full_invoke(const ml4f_header_t *model, const float *input, float *output);
+int ml4f_full_invoke_argmax(const ml4f_header_t *model, const float *input);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

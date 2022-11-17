@@ -34,7 +34,8 @@ export function assemble(src: string) {
 
     throwAssemblerErrors(procFile)
 
-    const binary = new Uint8Array(procFile.buf.length << 1)
+    // 16-byte aligned size
+    const binary = new Uint8Array(((procFile.buf.length << 1) + 15) & ~15)
     for (let i = 0; i < procFile.buf.length; ++i) {
         binary[i << 1] = procFile.buf[i] & 0xff
         binary[(i << 1) + 1] = (procFile.buf[i] >> 8) & 0xff
@@ -282,4 +283,20 @@ export function loadFlatJSONModel(preModel: any) {
     }
 
     return model
+}
+
+export function toCSource(name: string, machineCode: Uint8Array) {
+    if (machineCode.length & 3) throw new Error()
+    const u32 = new Uint32Array(machineCode.buffer)
+    let r = `const unsigned ${name}[${u32.length}] = {\n`
+    const chunk = 8
+    for (let off = 0; off < u32.length; off += chunk) {
+        r += "    "
+        r += Array.from(u32.slice(off, off + chunk))
+            .map(n => "0x" + ("00000000" + n.toString(16)).slice(-8) + ", ")
+            .join("")
+        r += "\n"
+    }
+    r += "};\n"
+    return r
 }

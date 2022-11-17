@@ -84,6 +84,19 @@ uint32_t ml4f_shape_size(const uint32_t *shape, uint32_t type) {
     return ml4f_shape_elements(shape) << 2;
 }
 
+int ml4f_argmax(float *data, uint32_t size) {
+    if (size == 0)
+        return -1;
+    float max = data[0];
+    int maxidx = 0;
+    for (unsigned i = 0; i < size; ++i)
+        if (data[i] > max) {
+            max = data[i];
+            maxidx = i;
+        }
+    return maxidx;
+}
+
 // This function is just an example - you'll likely have your own tensor formats and memory
 // allocation functions
 
@@ -98,6 +111,20 @@ int ml4f_full_invoke(const ml4f_header_t *model, const float *input, float *outp
     int r = ml4f_invoke(model, arena);
     memcpy(output, arena + model->output_offset,
            ml4f_shape_size(ml4f_output_shape(model), model->output_type));
+    free(arena);
+    return r;
+}
+
+int ml4f_full_invoke_argmax(const ml4f_header_t *model, const float *input) {
+    if (!ml4f_is_valid_header(model))
+        return -1;
+    uint8_t *arena = malloc(model->arena_bytes);
+    memcpy(arena + model->input_offset, input,
+           ml4f_shape_size(ml4f_input_shape(model), model->input_type));
+    int r = ml4f_invoke(model, arena);
+    if (r == 0)
+        r = ml4f_argmax((float *)(arena + model->output_offset),
+                        ml4f_shape_size(ml4f_output_shape(model), model->output_type) >> 2);
     free(arena);
     return r;
 }

@@ -13,9 +13,15 @@ Once compiled, weights can be stored as `float32` or `float16`.
 The following operators are supported:
 * `Conv1D`
 * `Conv2D`
+* `DepthwiseConv1D`
+* `DepthwiseConv2D`
 * `MaxPooling1D`
 * `MaxPooling2D`
+* `AveragePooling1D`
+* `AveragePooling2D`
 * `Dense`
+* `Activation`
+* `BatchNormalization`
 
 Plus some no-ops:
 * `InputLayer`
