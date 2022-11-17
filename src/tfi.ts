@@ -18,6 +18,14 @@ export declare interface DenseLayerArgs extends LayerArgs {
     useBias?: boolean;
 }
 
+export declare interface BatchNormalizationLayerArgs extends LayerArgs {
+    axis?: number;
+    epsilon?: number;
+    momentum?: number;
+    center?: boolean;
+    scale?: boolean;
+}
+
 export type PaddingMode = 'valid' | 'same' | 'causal';
 
 export type DataFormat = 'channelsFirst' | 'channelsLast';

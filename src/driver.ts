@@ -49,11 +49,20 @@ function randomTensor(shape: tf.Shape, mult = 1) {
     return tf.tidy(() => tf.tensor(U.range(num).map(_ => mult * U.randomSFloat())).reshape(shape))
 }
 
+function randomPosTensor(shape: tf.Shape, mult = 1) {
+    shape = shape.map(s => s == null ? 1 : s)
+    const num = shapeElts(shape)
+    return tf.tidy(() => tf.tensor(U.range(num).map(_ => mult * U.randomUFloat())).reshape(shape))
+}
+
 export function setRandomWeights(l: tf.layers.Layer) {
     let idx = 0
     for (const w of l.weights) {
         const mult = 1
-        w.write(randomTensor(w.shape, mult))
+        if (w.originalName.endsWith("/moving_variance"))
+            w.write(randomPosTensor(w.shape, mult))
+        else
+            w.write(randomTensor(w.shape, mult))
         idx++
     }
 }
@@ -179,7 +188,7 @@ export function compileAndTest(m: tf.LayersModel, options: Options) {
             options.verbose = true
             cres = compileModelCore(m, options)
         }
-        //console.log(cres.js)
+        console.log(cres.js)
         console.log("Failing model: ", m.name)
         throw e
     }

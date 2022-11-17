@@ -264,6 +264,14 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
         depth1: [
             tf.layers.inputLayer({ inputShape: [213, 1, 15] }),
             tf.layers.depthwiseConv2d({ kernelSize: [10, 1], depthMultiplier: 4, strides: 2, useBias: false })
+        ],
+        batch1: [
+            tf.layers.inputLayer({ inputShape: [213, 1, 15] }),
+            tf.layers.batchNormalization({ })
+        ],
+        batch2: [
+            tf.layers.inputLayer({ inputShape: [213, 1, 100] }),
+            tf.layers.batchNormalization({ })
         ]
     }
 }

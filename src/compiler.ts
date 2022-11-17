@@ -65,7 +65,7 @@ const compilers: SMap<LayerCompileInfo> = {
     AveragePooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
     Dense: { compile: compileDense },
     Activation: { compile: compileActivation, inPlace: true },
-    BatchNormalization: {},
+    BatchNormalization: { compile: compileBatchNorm, inPlace: true },
     Dropout: {},
     Flatten: {},
     InputLayer: {},
@@ -542,6 +542,81 @@ function compileMaxPooling(info: LayerInfo) {
             return res
         })
     ]
+}
+
+function compileBatchNorm(info: LayerInfo) {
+    const config = info.layer.getConfig() as unknown as tfi.BatchNormalizationLayerArgs
+
+    const flashRegs = numFPRegs - 2
+    const flashReg0 = Reg.S0 + 2
+
+    if (info.inputShape.length != 4)
+        unsupported("inputShape: " + info.inputShape.length)
+
+    if (config.dtype && config.dtype != "float32")
+        unsupported("dtype: " + config.dtype)
+
+    const [_null, outh, outw, numch] = info.inputShape
+
+    function readVar(name: string) {
+        const r = info.layer.weights.find(w => w.originalName.endsWith("/" + name)).read().arraySync() as number[]
+        assert(r.length == numch)
+        return r
+    }
+
+    const gamma = readVar("gamma")
+    const beta = readVar("beta")
+    const movingMean = readVar("moving_mean")
+    const movingVar = readVar("moving_variance")
+
+    // gamma * (batch - moving_mean) / sqrt(moving_var+epsilon) + beta
+    // Q = 1/sqrt(moving_var+epsilon)
+    // Q * gamma * (batch - moving_mean) + beta
+    // Q * gamma * batch - Q * gamma * moving_mean + beta
+
+    const mi = info.model
+    const weightsIdx = ir.weightOffset(mi)
+
+    for (let i = 0; i < numch; i++) {
+        const q = 1 / Math.sqrt(movingVar[i] + config.epsilon)
+        const mult = q * gamma[i]
+        const offset = - q * gamma[i] * movingMean[i] + beta[i]
+        // console.log({ e: config.epsilon, mv: movingVar[i], q, mult, offset })
+        ir.addWeight(mi, mult)
+        ir.addWeight(mi, offset)
+    }
+
+    assert(info.inputOff == info.outputOff)
+
+    const res = [
+        ir.loadWeightAddr(Reg.KernelPtr, weightsIdx),
+    ]
+
+    const kernSz = numch * 2
+    let chunk = 0
+    for (let kernOff = 0; kernOff < kernSz; kernOff += chunk) {
+        assert((kernOff & 1) == 0)
+        chunk = kernSz - kernOff
+        if (chunk > flashRegs)
+            chunk = flashRegs
+
+        res.push(
+            ir.loadWeight(mi, flashReg0, chunk),
+            ir.loadDataAddr(Reg.OutputPtr, info.outputOff + (kernOff >> 1)),
+            ir.repeat(outh * outw, () =>
+                ir.flatten(
+                    U.range(chunk >> 1).map(i =>
+                        [
+                            ir.load(Reg.S0, 1, Reg.OutputPtr, false),
+                            ir.vmul(Reg.S0, Reg.S0, (i * 2) + flashReg0),
+                            ir.vadd(Reg.S0, Reg.S0, (i * 2) + 1 + flashReg0),
+                            ir.store(Reg.OutputPtr, Reg.S0, 1, true),
+                        ]),
+                    ir.addPtr(Reg.OutputPtr, null, numch - (chunk >> 1))
+                )))
+    }
+
+    return res
 }
 
 function compileDense(info: LayerInfo) {
