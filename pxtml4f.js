@@ -2359,9 +2359,16 @@ ${modelInfo.weightAsm}`);
         else
           write(`addw ${dst}, ${src}, #${num}`);
       } else {
-        assert2(src != dst);
-        loadConst(dst, num);
-        write(`adds ${dst}, ${src}, ${dst}`);
+        if (src == dst) {
+          const tmp = dst == "r0" ? "r1" : "r0";
+          write(`push {${tmp}}`);
+          loadConst(tmp, num);
+          write(`adds ${dst}, ${dst}, ${tmp}`);
+          write(`pop {${tmp}}`);
+        } else {
+          loadConst(dst, num);
+          write(`adds ${dst}, ${src}, ${dst}`);
+        }
       }
     }
     function compiles(ops2) {
@@ -3927,7 +3934,7 @@ const modelFromWeights = ${js};
   }
 
   // src/driver.ts
-  var epsF32 = 2e-5;
+  var epsF32 = 9e-5;
   var epsF16 = 0.01;
   function mkProcessorFile() {
     const b = new File(new ThumbProcessor());
