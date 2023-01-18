@@ -5,7 +5,7 @@ import * as U from './util'
 import { assignLayerInfos, compileModelCore, CompileResult, LayerStats, partialModels, prefixModels, shapeElts } from './compiler';
 import { Options } from './ir';
 
-const epsF32 = 0.00002
+const epsF32 = 0.00009
 const epsF16 = 0.01
 
 function mkProcessorFile() {

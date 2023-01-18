@@ -258,6 +258,13 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
             tf.layers.flatten(),
             tf.layers.dense({ units: 3, activation: "softmax" }),
         ],
+        avgPool4: [
+            tf.layers.inputLayer({ inputShape: [2700] }),
+            tf.layers.reshape({ targetShape: [27, 1, 100] }),
+            tf.layers.avgPooling2d({ poolSize: [27, 1], strides: [27, 1], padding: "valid" }),
+            tf.layers.flatten(),
+            tf.layers.dense({ units: 3, activation: "softmax" }),
+        ],
         depth0: [
             tf.layers.inputLayer({ inputShape: [15, 1, 1] }),
             tf.layers.depthwiseConv2d({ kernelSize: [5, 1], depthMultiplier: 4, strides: 1, useBias: false })

@@ -442,9 +442,16 @@ _header:
             else
                 write(`addw ${dst}, ${src}, #${num}`)
         } else {
-            assert(src != dst)
-            loadConst(dst, num)
-            write(`adds ${dst}, ${src}, ${dst}`)
+            if (src == dst) {
+                const tmp = dst == "r0" ? "r1" : "r0"
+                write(`push {${tmp}}`)
+                loadConst(tmp, num)
+                write(`adds ${dst}, ${dst}, ${tmp}`)
+                write(`pop {${tmp}}`)
+            } else {
+                loadConst(dst, num)
+                write(`adds ${dst}, ${src}, ${dst}`)
+            }
         }
     }
 
