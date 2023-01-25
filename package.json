@@ -1,6 +1,6 @@
 {
   "name": "ml4f",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "description": "",
   "scripts": {
     "prepare": "node build",
