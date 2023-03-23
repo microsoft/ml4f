@@ -80,7 +80,7 @@ function loadJSONModel(modelPath: string) {
             }
             model.weightSpecs.push(...group.weights);
         }
-        model.weightData = Buffer.concat(buffers).buffer;
+        model.weightData = new Uint8Array(Buffer.concat(buffers)).buffer;
     }
 
     return model;
