@@ -244,13 +244,35 @@ export function loadTfjsModelJSON(modelJSON: tf.io.ModelJSON) {
     // remove regularizers, as we're not going to train the model, and unknown regularizers
     // cause it to fail to load
     const cfg = (modelJSON.modelTopology as any)?.model_config?.config
-    for (const layer of cfg?.layers || []) {
+    const outLayers: any[] = []
+
+    let seq_id = 0
+
+    function addLayer(layer: any) {
         const layerConfig = layer?.config
         if (layerConfig) {
             layerConfig.bias_regularizer = null
             layerConfig.activity_regularizer = null
             layerConfig.bias_constraint = null
         }
+
+        if (layer.class_name == "Sequential") {
+            seq_id++
+            for (const l of layer.config.layers) {
+                if (l.class_name == "InputLayer")
+                    continue
+                if (l.config.name == "dropout")
+                l.config.name += "_seq_" + seq_id
+                addLayer(l)
+            }
+        } else {
+            outLayers.push(layer)
+        }
+    }
+
+    if (cfg?.layers) {
+        cfg.layers.forEach(addLayer)
+        cfg.layers = outLayers
     }
 
     const model: tf.io.ModelArtifacts = {
