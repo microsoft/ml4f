@@ -65,6 +65,7 @@ const compilers: SMap<LayerCompileInfo> = {
     AveragePooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
     Dense: { compile: compileDense },
     Activation: { compile: compileActivation, inPlace: true },
+    Softmax: { compile: compileSoftmax, inPlace: true },
     BatchNormalization: { compile: compileBatchNorm, inPlace: true },
     Dropout: {},
     Flatten: {},
@@ -134,6 +135,12 @@ function addActivation(res: ir.Op[], info: LayerInfo) {
         res.push(ir.fcall("softmax", Reg.OutputPtr, numoutp))
     else
         unsupported("activation: " + config.activation)
+}
+
+function addSoftmax(res: ir.Op[], info: LayerInfo) {
+    const numoutp = shapeElts(info.outputShape)
+    res.push(ir.loadDataAddr(Reg.OutputPtr, info.outputOff))
+    res.push(ir.fcall("softmax", Reg.OutputPtr, numoutp))
 }
 
 function paddingConv(info: LayerInfo) {
@@ -393,7 +400,7 @@ for q up to channel_mult
                     chunk = kernSz - kernOff
                     if (chunk > flashRegs)
                         chunk = flashRegs
-                    res.push(ir.loadWeight(mi, flashRegOff, chunk))
+                    res.push(ir.loadWeight(mi, flashRegOff as Reg, chunk))
 
                     let skip = 0
                     for (let i = 0; i < kernOff; ++i)
@@ -700,6 +707,12 @@ function compileDense(info: LayerInfo) {
 function compileActivation(info: LayerInfo) {
     const res: ir.Op[] = []
     addActivation(res, info)
+    return res
+}
+
+function compileSoftmax(info: LayerInfo) {
+    const res: ir.Op[] = []
+    addSoftmax(res, info)
     return res
 }
 

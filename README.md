@@ -20,6 +20,7 @@ The following operators are supported:
 * `AveragePooling1D`
 * `AveragePooling2D`
 * `Dense`
+* `Softmax`
 * `Activation`
 * `BatchNormalization`
 
