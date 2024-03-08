@@ -3034,6 +3034,7 @@ ${indent(stringify(op.body))}}
     AveragePooling2D: { compile: compileMaxPooling, computePaddedInputShape: paddingPool },
     Dense: { compile: compileDense },
     Activation: { compile: compileActivation, inPlace: true },
+    Softmax: { compile: compileSoftmax, inPlace: true },
     BatchNormalization: { compile: compileBatchNorm, inPlace: true },
     Dropout: {},
     Flatten: {},
@@ -3090,6 +3091,11 @@ ${indent(stringify(op.body))}}
       res.push(fcall("softmax", 201 /* OutputPtr */, numoutp));
     else
       unsupported("activation: " + config.activation);
+  }
+  function addSoftmax(res, info) {
+    const numoutp = shapeElts(info.outputShape);
+    res.push(loadDataAddr(201 /* OutputPtr */, info.outputOff));
+    res.push(fcall("softmax", 201 /* OutputPtr */, numoutp));
   }
   function paddingConv(info) {
     const config = info.layer.getConfig();
@@ -3526,6 +3532,11 @@ ${indent(stringify(op.body))}}
   function compileActivation(info) {
     const res = [];
     addActivation(res, info);
+    return res;
+  }
+  function compileSoftmax(info) {
+    const res = [];
+    addSoftmax(res, info);
     return res;
   }
   function noop(info) {
@@ -4131,13 +4142,31 @@ const modelFromWeights = ${js};
   function loadTfjsModelJSON(modelJSON) {
     var _a, _b;
     const cfg = (_b = (_a = modelJSON.modelTopology) == null ? void 0 : _a.model_config) == null ? void 0 : _b.config;
-    for (const layer of (cfg == null ? void 0 : cfg.layers) || []) {
+    const outLayers = [];
+    let seq_id = 0;
+    function addLayer(layer) {
       const layerConfig = layer == null ? void 0 : layer.config;
       if (layerConfig) {
         layerConfig.bias_regularizer = null;
         layerConfig.activity_regularizer = null;
         layerConfig.bias_constraint = null;
       }
+      if (layer.class_name == "Sequential") {
+        seq_id++;
+        for (const l of layer.config.layers) {
+          if (l.class_name == "InputLayer")
+            continue;
+          if (l.config.name == "dropout")
+            l.config.name += "_seq_" + seq_id;
+          addLayer(l);
+        }
+      } else {
+        outLayers.push(layer);
+      }
+    }
+    if (cfg == null ? void 0 : cfg.layers) {
+      cfg.layers.forEach(addLayer);
+      cfg.layers = outLayers;
     }
     const model = {
       modelTopology: modelJSON.modelTopology,
