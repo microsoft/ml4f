@@ -57,8 +57,9 @@ function runTSC(args) {
 }
 
 const files = {
-  "built/ml4f.js": "src/main.ts",
-  "built/ml4f.cjs": "src/main.ts",
+  "built/ml4f.js": "src/ml4f.ts",
+  "built/ml4f.cjs": "src/ml4f.ts",
+  "built/ml4f.mjs": "src/ml4f.ts",
   "built/pxtml4f.js": "pxt/extension.ts",
   "built/pxtml4f.cjs": "pxt/extension.ts",
   "built/cli.cjs": "cli/src/cli.ts",
@@ -68,18 +69,21 @@ async function main() {
   try {
     for (const outfile of Object.keys(files)) {
       const src = files[outfile]
+      const basename = outfile.replace(/.*\//, "").replace(/\..*/, "")
       const cjs = outfile.endsWith(".cjs")
       const mjs = outfile.endsWith(".mjs")
+      const iife = !cjs && !mjs
       await esbuild.build({
         entryPoints: [src],
         bundle: true,
         sourcemap: true,
         outfile,
         logLevel: "warning",
-        external: ["@tensorflow/tfjs", "commander"],
+        external: iife ? [] : ["@tensorflow/tfjs", "commander"],
         platform: cjs ? "node" : "browser",
         target: "es2019",
         format: mjs ? "esm" : cjs ? "cjs" : "iife",
+        globalName: iife ? basename : undefined,
         watch
       })
     }
@@ -88,7 +92,7 @@ async function main() {
       await runTSC(["-b", ".", "pxt", "cli"])
   } catch (e) {
     console.error(e)
-   }
+  }
 }
 
 main()

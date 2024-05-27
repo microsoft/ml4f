@@ -11,3 +11,4 @@ c/*.dump
 c/*.hex
 c/*.bin
 tmp
+*.tgz

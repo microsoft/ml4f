@@ -11,7 +11,7 @@ import {
     Options, runModel, sampleModel, testAllModels,
     testFloatConv,
     toCSource
-} from '../../src/main'
+} from '../../src/ml4f'
 
 interface CmdOptions {
     debug?: boolean

@@ -18,7 +18,8 @@
     "noImplicitReturns": true,
     "outDir": "built",
     "newLine": "LF",
-    "noEmit": true,
+    "emitDeclarationOnly": true,
+    "outFile": "built/ml4f",
     "typeRoots": [
       "node_modules/@types"
     ]

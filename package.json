@@ -13,6 +13,7 @@
   "types": "./built/ml4f.d.ts",
   "main": "./built/ml4f.cjs",
   "browser": "./built/ml4f.js",
+  "module": "./built/ml4f.mjs",
   "files": [
     "built/ml4f.*js",
     "built/pxtml4f.*js",
