@@ -2932,11 +2932,14 @@ ${indent(stringify(op.body))}}
     const config = info.layer.getConfig();
     const flashRegs = numFPRegs - 2;
     const flashReg0 = 0 /* S0 */ + 2;
-    if (info.inputShape.length != 4)
-      unsupported("inputShape: " + info.inputShape.length);
+    let inpShape = info.inputShape;
+    if (inpShape.length == 2)
+      inpShape = [inpShape[0], 1, 1, inpShape[1]];
+    if (inpShape.length != 4)
+      unsupported("inputShape: " + inpShape.length);
     if (config.dtype && config.dtype != "float32")
       unsupported("dtype: " + config.dtype);
-    const [_null, outh, outw, numch] = info.inputShape;
+    const [_null, outh, outw, numch] = inpShape;
     function readVar(name) {
       const r = info.layer.weights.find((w) => w.originalName.endsWith("/" + name)).read().arraySync();
       assert3(r.length == numch);
@@ -3409,6 +3412,8 @@ const modelFromWeights = ${js};
     delete mod.weightSpecs;
     const cfg = (_a = mod.modelTopology) == null ? void 0 : _a.config;
     const layersJson = (cfg == null ? void 0 : cfg.layers) || [];
+    if (mod.modelTopology.class_name != "Sequential")
+      throw new Error("only Sequential models supported");
     for (let i = 0; i < m.layers.length; ++i) {
       const layerJson = layersJson[i];
       const layer = m.layers[i];
@@ -4509,6 +4514,18 @@ const modelFromWeights = ${js};
       batch2: [
         tf3.layers.inputLayer({ inputShape: [213, 1, 100] }),
         tf3.layers.batchNormalization({})
+      ],
+      singleDimBatchNorm: [
+        tf3.layers.inputLayer({ inputShape: [24] }),
+        tf3.layers.batchNormalization({}),
+        tf3.layers.dense({
+          units: 16,
+          activation: "relu"
+        }),
+        tf3.layers.dense({
+          units: 3,
+          activation: "softmax"
+        })
       ]
     };
   }
