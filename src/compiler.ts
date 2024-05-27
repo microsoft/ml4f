@@ -557,13 +557,17 @@ function compileBatchNorm(info: LayerInfo) {
     const flashRegs = numFPRegs - 2
     const flashReg0 = Reg.S0 + 2
 
-    if (info.inputShape.length != 4)
-        unsupported("inputShape: " + info.inputShape.length)
+    let inpShape = info.inputShape
+    if (inpShape.length == 2)
+        inpShape = [inpShape[0], 1, 1, inpShape[1]]
+
+    if (inpShape.length != 4)
+        unsupported("inputShape: " + inpShape.length)
 
     if (config.dtype && config.dtype != "float32")
         unsupported("dtype: " + config.dtype)
 
-    const [_null, outh, outw, numch] = info.inputShape
+    const [_null, outh, outw, numch] = inpShape
 
     function readVar(name: string) {
         const r = info.layer.weights.find(w => w.originalName.endsWith("/" + name)).read().arraySync() as number[]

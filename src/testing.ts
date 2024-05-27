@@ -280,7 +280,19 @@ function getSampleModels(): SMap<tf.layers.Layer[]> {
         batch2: [
             tf.layers.inputLayer({ inputShape: [213, 1, 100] }),
             tf.layers.batchNormalization({})
-        ]
+        ],
+        singleDimBatchNorm: [
+            tf.layers.inputLayer({ inputShape: [24] }),
+            tf.layers.batchNormalization({}),
+            tf.layers.dense({
+                units: 16,
+                activation: "relu"
+            }),
+            tf.layers.dense({
+                units: 3,
+                activation: "softmax"
+            })
+        ],
     }
 }
 
