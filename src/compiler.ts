@@ -1152,6 +1152,9 @@ export async function* partialModels(m: tf.LayersModel, opts: Options) {
     const cfg = (mod.modelTopology as any)?.config
     const layersJson: any[] = cfg?.layers || []
 
+    if ((mod.modelTopology as any).class_name != "Sequential")
+        throw new Error("only Sequential models supported")
+
     for (let i = 0; i < m.layers.length; ++i) {
         const layerJson = layersJson[i]
         const layer = m.layers[i]
